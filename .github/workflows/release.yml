@@ -1,0 +1,50 @@
+# Push a tag vX.Y.Z (or vX.Y.Z-something for a pre-release) to publish a
+# release with neverblender-X.Y.Z.zip, the add-on for Blender 3.3 to 5.2.
+# The tag must match bl_info["version"] in neverblender/__init__.py.
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check the tag matches bl_info
+        id: version
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          base="${tag%%-*}"
+          bl=$(python3 - <<'PY'
+          import ast
+          tree = ast.parse(open("neverblender/__init__.py", encoding="utf-8").read())
+          node = next(a.value for a in tree.body if isinstance(a, ast.Assign)
+                      and any(getattr(t, "id", "") == "bl_info" for t in a.targets))
+          print(".".join(str(n) for n in ast.literal_eval(node)["version"]))
+          PY
+          )
+          if [ "$bl" != "$base" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match bl_info version $bl"
+            exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Build the zip
+        run: |
+          zip -r -X "neverblender-${{ steps.version.outputs.tag }}.zip" neverblender -x '*/__pycache__/*' '*.pyc'
+          unzip -l "neverblender-${{ steps.version.outputs.tag }}.zip"
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          pre=""
+          case "$GITHUB_REF_NAME" in *-*) pre="--prerelease" ;; esac
+          gh release create "$GITHUB_REF_NAME" "neverblender-${{ steps.version.outputs.tag }}.zip" \
+            --verify-tag --title "Neverblender ${{ steps.version.outputs.tag }}" --generate-notes $pre
