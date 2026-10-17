@@ -79,8 +79,8 @@ if 'bpy' in locals():
 bl_info = {
     "name": "Neverblender",
     "author": "Attila Gyoerkoes",
-    'version': (2, 8, 51),
-    "blender": (2, 93, 0),
+    'version': (4, 1, 0),
+    "blender": (4, 0, 0),
     "location": "File > Import-Export, Object Properties",
     "description": "Import, export and edit Aurora mdl format",
     "warning": "",
@@ -108,6 +108,8 @@ neverblender_classes = (
 
     nvb_props.NVB_PG_object_nfo,
     nvb_props.NVB_PG_object,
+    nvb_props.NVB_PG_collection_nfo,
+    nvb_props.NVB_PG_collection,
 
     nvb_props.NVB_PG_bone,
     nvb_props.NVB_PG_emitter,
@@ -117,6 +119,7 @@ neverblender_classes = (
     nvb_ops_io.NVB_OT_mdlexport,
     nvb_ops_io.NVB_OT_mdlimport,
     nvb_ops_io.NVB_OT_mdl_superimport,
+    nvb_ops_io.NVB_OT_setexport,
 
     nvb_ops_set.NVB_OT_set_reload,
     nvb_ops_set.NVB_OT_set_open,
@@ -175,19 +178,20 @@ neverblender_classes = (
     nvb_ui.NVB_PT_animlist,
     nvb_ui.NVB_PT_utils,
     nvb_ui.NVB_PT_emitter,
+    nvb_ui.NVB_PT_collection,
+    nvb_ui.NVB_PT_object_nfo,
 )
 
 
 def menu_func_export(self, context):
     """Helper to register a Menu element."""
-    self.layout.operator(nvb_ops_io.NVB_OT_mdlexport.bl_idname,
-                         text="Aurora (.mdl)")
+    self.layout.operator(nvb_ops_io.NVB_OT_mdlexport.bl_idname, text="Aurora Model (.mdl)")
+    self.layout.operator(nvb_ops_io.NVB_OT_setexport.bl_idname, text="Aurora Setfile (.set)")
 
 
 def menu_func_import(self, context):
     """Helper to register a Menu element."""
-    self.layout.operator(nvb_ops_io.NVB_OT_mdlimport.bl_idname,
-                         text="Aurora (.mdl)")
+    self.layout.operator(nvb_ops_io.NVB_OT_mdlimport.bl_idname, text="Aurora Model (.mdl)")
 
 
 def register():
@@ -198,9 +202,8 @@ def register():
 
     bpy.types.Object.nvb = \
         bpy.props.PointerProperty(type=nvb_props.NVB_PG_object)
-    # bpy.types.Object.nvb.nfo = \
-    #     bpy.props.PointerProperty(type=nvb_props.NVB_PG_object_nfo)
-
+    bpy.types.Collection.nvb = \
+        bpy.props.PointerProperty(type=nvb_props.NVB_PG_collection)
     bpy.types.Material.nvb = \
         bpy.props.PointerProperty(type=nvb_props.NVB_PG_material)
     bpy.types.Light.nvb = \
@@ -224,7 +227,6 @@ def unregister():
     for cl in reversed(neverblender_classes):
         bpy.utils.unregister_class(cl)
 
-    # del bpy.types.Object.nvb.nfo
     del bpy.types.Object.nvb
     del bpy.types.Material.nvb
     del bpy.types.Light.nvb

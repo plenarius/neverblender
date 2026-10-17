@@ -13,55 +13,31 @@ from .nvb_materialnode import Materialnode
 class Material(object):
     """A material read from an mdl node."""
 
-    def __init__(self, name='unnamed'):
+    def __init__(self):
         """TODO: DOC."""
-        self.name = name
-        self.ambient = (1.0, 1.0, 1.0, 1.0)
-        self.alpha = 1.0
-        self.texture_list = [None] * 15
-        self.color_list = [(1.0, 1.0, 1.0, 1.0)] * 15
-        self.color_list[0] = (0.8, 0.8, 0.8, 1.0)  # Default diffuse color
-        self.color_list[2] = (0.0, 0.0, 0.0, 1.0)  # Default specular color/value
-        self.color_list[3] = (1.0, )  # Default roughness value (overridden by texture)
-        self.color_list[4] = (0.0, )  # Default displacement offset
-        self.color_list[5] = (0.0, 0.0, 0.0, 1.0)  # Default Illumination/Emission color
-        self.renderhints = set()
-        self.mtr_name = None
+        self.materialname = ""
+        self.bitmap = ""
+        self.renderhint = ""
+        self.texture_list = [None]*15
         self.mtr_data = None
-        self.bitmap = None  # Only used for naming, textures are in texture_list
 
-    @staticmethod
-    def colorisclose(a, b, tol=0.05):
-        return ((a is None) and (b is None)) or \
-               (a and b and (sum([math.isclose(v[0], v[1]) for v in zip(a, b)]) == len(a)))
-
-    def generate_material_name(self, force_lowercase=False):
+    def generate_material_name(self, mdl_bitmap, mdl_materialname, texture0, force_lowercase=False):
         """Generates a material name for use in blender."""
         # 'materialname' over 'texture0'/'bitmap' over Default
-        if self.mtr_name:
-            mat_name = self.mtr_name
-        elif self.bitmap:
-            mat_name = self.bitmap
-        elif (self.texture_list[0]) and \
-                (self.texture_list[0] is not nvb_def.null):
-            mat_name = self.texture_list[0].lower()
+        if mdl_materialname:
+            mat_name = mdl_materialname
+        elif mdl_bitmap:
+            mat_name = mdl_bitmap
+        elif texture0 and (texture0 is not nvb_def.null):
+            mat_name = texture0
         else:
-            mat_name = ""  # Blender will a default name
+            mat_name = ""  # Blender will create a default name
         if force_lowercase:
             mat_name = mat_name.lower()
         return mat_name
 
     def find_blender_material(self, options):
         """Finds a material in blender with the same settings as this one."""
-        def check_colors(color_list1, color_list2, ambient1=None, ambient2=None):
-            # Always check selfillumination
-            same_colors = Material.colorisclose(color_list1[5], color_list2[5])
-            if not options.mat_ignore_mdl_diffuse_color:
-                same_colors = same_colors and Material.colorisclose(color_list1[0], color_list2[0])
-            if not options.mat_ignore_mdl_ambient_color:
-                same_colors = same_colors and Material.colorisclose(ambient1, ambient2)
-            return same_colors
-
         def check_textures(texture_list1, texture_list2, ignore_case=True):
             """Check if the texture lists match."""
             if ignore_case:
@@ -93,53 +69,16 @@ class Material(object):
             if not blen_mat.name.startswith("wok_"):
                 #print("#")
                 #print("Checking: " + blen_mat.name)
-                tex_list, col_list, alpha, ambient = Materialnode.get_node_data(blen_mat)
+                tex_list = Materialnode.get_texture_list(blen_mat)
                 #print(tex_list)
                 #print(col_list)
                 #print(alpha)
                 # Compare textures, colors and alpha
-                if ((tex_list and len(tex_list) >= 5) and check_textures(tex_list[:5], self.texture_list[:5], True) and
-                    check_colors(col_list, self.color_list, ambient, self.ambient) and
-                    check_shaders(blen_mat, self.mtr_data) and
-                    math.isclose(alpha, self.alpha)):
+                if ( (tex_list and len(tex_list) >= 5) and check_textures(tex_list[:5], self.texture_list[:5], True) and
+                     check_shaders(blen_mat, self.mtr_data) ):
                     #print("MATCH!")
                     return blen_mat
         return None
-
-    def isdefault(self):
-        """Return True if the material contains only default values"""
-        d = True
-        d = d and math.isclose(self.alpha, 1.0, abs_tol=0.03)
-        d = d and (self.texture_list.count(nvb_def.null) ==
-                   len(self.texture_list))
-        d = d and self.mtr_name == ''
-        return d
-
-    def parse_ascii_line(self, line):
-        """TODO: Doc."""
-        label = line[0].lower()
-        if label == 'ambient':
-            self.ambient = nvb_parse.ascii_color(line[1:])
-        elif label == 'diffuse':
-            self.color_list[0] = nvb_parse.ascii_color(line[1:])
-        elif label == 'specular':
-            self.color_list[2] = nvb_parse.ascii_color(line[1:])
-        elif label in ['selfillumcolor', 'setfillumcolor']:
-            self.color_list[5] = nvb_parse.ascii_color(line[1:])
-        elif label == 'alpha':
-            self.alpha = nvb_parse.ascii_float(line[1])
-        elif label == 'materialname':
-            self.mtr_name = nvb_parse.ascii_identifier(line[1])
-        elif label == 'renderhint':
-            self.renderhints.add(nvb_parse.ascii_identifier(line[1]))
-        elif label == 'bitmap':
-            self.bitmap = nvb_parse.ascii_texture(line[1])
-            if self.texture_list[0] == None:
-                self.texture_list[0] = self.bitmap
-        elif label.startswith('texture'):
-            if label[7:]:  # 'texture' is followed by a number
-                idx = int(label[7:])
-                self.texture_list[idx] = nvb_parse.ascii_texture(line[1])
 
     def mtr_read(self, options):
         """Read the contents of the mtr file specified in the mdl file."""
@@ -150,15 +89,15 @@ class Material(object):
 
         # if an mtr_name has been specified try opening it
         # but don't do anything else!
-        if self.mtr_name:
-            if self.mtr_name in options.mtrdb:
-                self.mtr_data = options.mtrdb[self.mtr_name]
+        if self.materialname:
+            if self.materialname in options.mtrdb:
+                self.mtr_data = options.mtrdb[self.materialname]
             else:
-                mtr_path = get_mtr_path(self.mtr_name, options.filepath)
+                mtr_path = get_mtr_path(self.materialname, options.filepath)
                 if os.path.isfile(mtr_path):
-                    mtr = nvb_mtr.Mtr(self.mtr_name)
+                    mtr = nvb_mtr.Mtr(self.materialname)
                     if mtr.read_mtr(mtr_path):
-                        options.mtrdb[self.mtr_name] = mtr
+                        options.mtrdb[self.materialname] = mtr
                         self.mtr_data = mtr
         # Try opening "bitmap"
         elif self.bitmap:
@@ -180,7 +119,7 @@ class Material(object):
         """Merges the contents of the mtr file into this material."""
         # Merge values from mtr into this material
         if self.mtr_data:
-            self.renderhints.update(self.mtr_data.renderhints)
+            self.renderhint = self.mtr_data.renderhint
             # Load all existing textures from the mtr into the material
             self.texture_list = \
                 [t2 if t2 else t1 for t1, t2 in
@@ -190,27 +129,23 @@ class Material(object):
             #     [c2 if c2 else c1 for c1, c2 in
             #      zip(self.color_list, self.mtr_data.color_list)]
 
-    def create_blender_material(self, options, always_create_new=True):
+    def create_blender_material(self, options, mdl_bitmap, mdl_materialname, mdl_textures, always_create_new=True):
         """Returns a blender material with the stored values."""
-        # Ignore ambient color parameter (ignored with the new PBR shaders in the EE)
-        if options.mat_ignore_mdl_ambient_color:
-            self.ambient = None
-        # Ignore diffuse color parameter (will be multiplied with diffuse texture)
-        if options.mat_ignore_mdl_diffuse_color:
-            self.color_list[0] = None
-        # Ignore specular color parameter (This is always ignored by the engine)
-        if options.mat_ignore_mdl_specular_color:
-            self.color_list[2] = None
+        blen_mat_name = self.generate_material_name(mdl_bitmap, mdl_materialname, mdl_textures[0], options.mat_mtr_lowercase)
+
+        self.materialname = mdl_materialname
+        self.bitmap = mdl_bitmap
+
+        self.texture_list = mdl_textures
+        if not self.texture_list[0]:
+            self.texture_list[0] = mdl_bitmap
+
         # Load mtr values into this material
         # This will override values from mdl, even the ones previously ignored (from the mdl)
         if options.mat_use_mtr:
             self.mtr_read(options)
             self.mtr_merge()
-        # Sometimes, we don't want self illumination at all (e.g. interfering with rendering minimaps)
-        if options.mat_ignore_selfillum_color:
-            self.color_list[5] = (0.0, 0.0, 0.0, 1.0)
-        if options.mat_ignore_selfillum_texture:
-             self.texture_list[5] = None
+
         if options.mat_mtr_lowercase:
             self.texture_list = [t.lower() if t else t for t in self.texture_list]
         # Look for similar materials to avoid duplicates
@@ -219,65 +154,33 @@ class Material(object):
             blender_mat = self.find_blender_material(options)
         # Create new material if necessary
         if not blender_mat:
-            new_name = self.generate_material_name(options.mat_mtr_lowercase)
-            blender_mat = bpy.data.materials.new(new_name)
+            blender_mat = bpy.data.materials.new(blen_mat_name)
             blender_mat.blend_method = 'HASHED'  # 'BLEND' doesn't play nice
             blender_mat.show_transparent_back = False
             blender_mat.use_backface_culling = True
 
-            blender_mat.nvb.mtr.use = bool(self.mtr_name) or self.mtr_data is not None
+            blender_mat.nvb.mtr.use = bool(self.materialname) or self.mtr_data is not None
             if blender_mat.nvb.mtr.use and self.mtr_data:
-                blender_mat.nvb.mtr.renderhint = next(iter(self.mtr_data.renderhints or []), "")
+                blender_mat.nvb.mtr.renderhint = self.mtr_data.renderhint
                 blender_mat.nvb.mtr.shader_vs = self.mtr_data.customshaderVS
                 blender_mat.nvb.mtr.shader_gs = self.mtr_data.customshaderGS
                 blender_mat.nvb.mtr.shader_fs = self.mtr_data.customshaderFS
             blender_mat.use_nodes = True
             blender_mat.node_tree.nodes.clear()
-            Materialnode.add_node_data(blender_mat, new_name,
-                                       self.texture_list, self.color_list, self.alpha, self.ambient,
-                                       options)
+            Materialnode.add_node_data(blender_mat, blen_mat_name, self.texture_list, options)
         return blender_mat
 
     @staticmethod
     def generate_ascii(obj, ascii_lines, options):
-        """Write Ascii lines from the objects material for a MDL file."""
-        blen_material = obj.active_material
-
-        # Format string for colors
-        fstr_col = '  {:s}' + 3 * ' {:3.2f}'
-        # Format string for first texture, depending on user preferences it
-        # is either 'bitmap' or 'texture0'
         fstr_tex0 = '  ' + options.mat_diffuse_ref + ' {:s}'
+        blen_material = obj.active_material
         if obj.nvb.render and blen_material:
-            tex_list, col_list, alpha, ambient = Materialnode.get_node_data(blen_material)
+            tex_list = Materialnode.get_texture_list(blen_material)
 
             # Clean up texture list, delete trailing "null"
             tex_list = [t if t else nvb_def.null for t in tex_list]
             while tex_list and tex_list[-1] == nvb_def.null:
                 _ = tex_list.pop()
-            # Clean up color list
-            default_colors = [[1.0]*4] + [[0.0] * 4] * 14
-            col_list = [c1[:3] if c1 else c2[:3] for c1, c2 in
-                        zip(col_list, default_colors)]
-            # Write colors
-            if ambient:
-                ascii_lines.append(fstr_col.format('ambient', *ambient[:3]))
-            else:
-                ascii_lines.append(fstr_col.format('ambient', *[1.0] * 3))
-            if col_list[0]:
-                ascii_lines.append(fstr_col.format('diffuse', *col_list[0][:3]))
-            else:
-                ascii_lines.append(fstr_col.format('diffuse', *[1.0] * 3))
-            if col_list[2]:
-                ascii_lines.append(fstr_col.format('specular', *col_list[2][:3]))
-            else:
-                ascii_lines.append(fstr_col.format('specular', *[0.0] * 3))
-            if col_list[5]:
-                ascii_lines.append(fstr_col.format('selfillumcolor', *col_list[5][:3]))
-            # Write Alpha
-            if alpha is not None and not math.isclose(alpha, 1.0, rel_tol=0.01):  # Omit 1.0
-                fstr = '  alpha {:3.2f}'
-                ascii_lines.append(fstr.format(alpha))
             # Write textures
             if blen_material.nvb.mtr.use:
                 # MTRs are exported in a second pass
@@ -298,7 +201,4 @@ class Material(object):
                 for i, tex in enumerate(tex_list):
                     ascii_lines.append(fstr_list[i].format(tex))
         else:
-            ascii_lines.append(fstr_col.format('ambient', *[1.0] * 3))
-            ascii_lines.append(fstr_col.format('diffuse', *[1.0] * 3))
-            ascii_lines.append(fstr_col.format('specular', *[0.0] * 3))
             ascii_lines.append(fstr_tex0.format(nvb_def.null))

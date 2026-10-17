@@ -1,6 +1,7 @@
 """TODO: DOC."""
 
 import array
+import math
 
 import mathutils
 import bpy
@@ -245,7 +246,17 @@ class Trimesh(Node):
         self.facedef = []
         self.tangents = []
         self.normals = []
-        self.colors = []
+        self.colors = []  # vertex colors
+        # Material data coming from mdl
+        self.alpha = 1.0
+        self.ambient = (1.0, 1.0, 1.0)  # Default ambient value
+        self.diffuse = (0.8, 0.8, 0.8)  # Default diffuse value
+        self.specular = (0.0, 0.0, 0.0)  # Default specular value
+        self.selfillum = (0.0, 0.0, 0.0)  # Default self-illumination value
+        self.texture_list = [None] * 15
+        self.renderhint = ""
+        self.materialname = None
+        self.bitmap = None
 
     def parse_ascii_line(self, itlines):
         """TODO: Doc."""
@@ -268,6 +279,26 @@ class Trimesh(Node):
                 self.transparencyhint = nvb_parse.ascii_int(line[1])
             elif label == 'shininess':
                 self.shininess = nvb_parse.ascii_int(line[1])
+            if label == 'ambient':
+                self.ambient = nvb_parse.ascii_color(line[1:])
+            elif label == 'diffuse':
+                self.diffuse = nvb_parse.ascii_color(line[1:])
+            elif label == 'specular':
+                self.specular = nvb_parse.ascii_color(line[1:])
+            elif label in ['selfillumcolor', 'setfillumcolor']:
+                self.selfillum = nvb_parse.ascii_color(line[1:])
+            elif label == 'alpha':
+                self.alpha = nvb_parse.ascii_float(line[1])
+            elif label == 'materialname':
+                self.materialname = nvb_parse.ascii_identifier(line[1])
+            elif label == 'renderhint':
+                self.renderhint = nvb_parse.ascii_identifier(line[1])
+            elif label == 'bitmap':
+                self.bitmap = nvb_parse.ascii_texture(line[1])
+            elif label.startswith('texture'):
+                if label[7:]:  # 'texture' is followed by a number
+                    idx = int(label[7:])
+                    self.texture_list[idx] = nvb_parse.ascii_texture(line[1])
             elif label == 'verts':
                 if not self.vertex_coords:
                     nvals = int(line[1])
@@ -309,8 +340,6 @@ class Trimesh(Node):
                     tmp = [next(itlines) for _ in range(nvals)]
                     self.texture_coordinates[tvid] = \
                         [(float(v[0]), float(v[1])) for v in tmp]
-            else:
-                self.material.parse_ascii_line(line)
         return line
 
     def fix_degenerated_tverts(self):
@@ -402,19 +431,17 @@ class Trimesh(Node):
             return
 
         # Set everything to smooth
-        blen_mesh.polygons.foreach_set('use_smooth',
-                                       [True] * num_blen_polygons)
+        blen_mesh.polygons.foreach_set('use_smooth', [True] * num_blen_polygons)
 
         # Create material
-        if self.render and options.mat_import:
+        #if self.render and options.mat_import:
+        if options.mat_import and (self.bitmap or self.materialname or self.texture_list[0]):
             always_create_new = (self.nodetype == nvb_def.Nodetype.ANIMMESH)
-            material = self.material.create_blender_material(
-                options, always_create_new)
+            material = self.material.create_blender_material(options, self.bitmap, self.materialname, self.texture_list, always_create_new)
             if material:
                 blen_mesh.materials.append(material)
                 # Set material idx (always 0, only a single material)
-                blen_mesh.polygons.foreach_set('material_index',
-                                               [0] * num_blen_polygons)
+                blen_mesh.polygons.foreach_set('material_index', [0] * num_blen_polygons)
 
         # Create UV maps
         if self.facedef:
@@ -510,6 +537,12 @@ class Trimesh(Node):
         obj.nvb.rotatetexture = (self.rotatetexture >= 1)
         obj.nvb.transparencyhint = self.transparencyhint
         obj.nvb.shininess = self.shininess
+        obj.nvb.alpha = self.alpha
+        obj.nvb.ambient = self.ambient[:3]
+        obj.nvb.diffuse = self.diffuse[:3]
+        obj.nvb.specular = self.specular[:3]
+        obj.nvb.selfillum = self.selfillum[:3]
+
         obj.color = (*self.wirecolor, 1.0)
 
     def createObject(self, options):
@@ -533,6 +566,15 @@ class Trimesh(Node):
 
             bmesh.ops.triangulate(bm, faces=bm.faces)
             bm.to_mesh(mesh)
+
+            # bmesh.ops.triangulate ditches vertex normals
+            # But we can't restore the original ones if we do a split
+            """
+            normals = [vert.normal.copy() for vert in mesh.loops]  # Store normals before triangulation
+            bmesh.ops.triangulate(bm, faces=bm.faces, quad_method='FIXED')  # Triangulate with FIXED to keep the mesh close to the original
+            bm.to_mesh(mesh)
+            mesh.normals_split_custom_set(normals) # Apply normals that were stored before triangulation
+            """
 
             bm.clear()
             bm.free()
@@ -771,9 +813,19 @@ class Trimesh(Node):
             asciiLines.append(fstr.format(*obj.color[:3]))
 
         if not iswalkmesh:
+            # Material data from material
             nvb_material.Material.generate_ascii(obj, asciiLines, options)
-            # Shininess
+            # Material data from node/object
             asciiLines.append('  shininess ' + str(obj.nvb.shininess))
+            # Write Alpha
+            if not math.isclose(obj.nvb.alpha, 1.0, rel_tol=0.01):  # Omit 1.0
+                fstr = '  alpha {:3.2f}'
+                asciiLines.append(fstr.format(obj.nvb.alpha))
+            fstr_col = '  {:s}' + 3 * ' {:3.2f}'
+            asciiLines.append(fstr_col.format('ambient', *obj.nvb.ambient[:3]))
+            asciiLines.append(fstr_col.format('diffuse', *obj.nvb.diffuse[:3]))
+            asciiLines.append(fstr_col.format('specular', *obj.nvb.specular[:3]))
+            asciiLines.append(fstr_col.format('selfillumcolor', *obj.nvb.selfillum[:3]))
             # Render and Shadow
             #if not obj.nvb.shadow or not obj.nvb.render:  # Skip default value (both are 1)
             asciiLines.append('  render ' + str(int(obj.nvb.render)))
@@ -1413,7 +1465,8 @@ class Light(Node):
 
         lamp.color = self.color
         lamp.energy = self.multiplier
-        lamp.distance = self.radius
+        #lamp.distance = self.radius
+        lamp.cutoff_distance = self.radius
         lamp.shadow_soft_size = self.radius
 
         return lamp
@@ -1490,12 +1543,14 @@ class Light(Node):
         lamp = obj.data
         asciiLines.append('  ambientonly ' + str(int(lamp.nvb.ambientonly)))
         asciiLines.append('  ndynamictype ' + str(int(lamp.nvb.isdynamic)))
-        asciiLines.append('  affectdynamic ' +
-                          str(int(lamp.nvb.affectdynamic)))
+        asciiLines.append('  affectdynamic ' + str(int(lamp.nvb.affectdynamic)))
         asciiLines.append('  shadow ' + str(int(lamp.nvb.shadow)))
         asciiLines.append('  lightpriority ' + str(lamp.nvb.lightpriority))
         asciiLines.append('  fadingLight ' + str(int(lamp.nvb.fadinglight)))
-        asciiLines.append('  radius ' + str(round(lamp.shadow_soft_size, 1)))
+        if lamp.use_custom_distance:
+            asciiLines.append('  radius ' + str(round(lamp.cutoff_distance, 1)))
+        else:
+            asciiLines.append('  radius ' + str(round(lamp.shadow_soft_size, 1)))
         asciiLines.append('  multiplier ' + str(round(lamp.energy, 1)))
         fstr = '  color {:3.2f} {:3.2f} {:3.2f}'
         asciiLines.append(fstr.format(*lamp.color))
@@ -1519,7 +1574,7 @@ class Aabb(Trimesh):
             """Triangulate a mesh using bmesh to retain sharp edges."""
             bm = bmesh.new()
             bm.from_mesh(mesh)
-            bmesh.ops.triangulate(bm, faces=bm.faces)
+            bmesh.ops.triangulate(bm, faces=bm.faces, quad_method='FIXED')
             bm.to_mesh(mesh)
             bm.free()
             del bm
@@ -1594,13 +1649,13 @@ class Aabb(Trimesh):
         if not blen_mesh.polygons:
             return None
 
-        if nvb_utils.create_wok_materials(blen_mesh):
+        # We limit the # materials to 63
+        num_face_materials = min(max([f[7] for f in self.facedef]), 63)
+        if nvb_utils.create_wok_materials(blen_mesh, False, num_face_materials):
             blen_mesh.update()
-            if len(blen_mesh.materials) > max([f[7] for f in self.facedef]):
-                # Apply the walkmesh materials to each face
-                blen_mesh.polygons.foreach_set('material_index',
-                                               [f[7] for f in self.facedef])
-                blen_mesh.update()
+            # Apply the walkmesh materials to each face
+            blen_mesh.polygons.foreach_set('material_index', [min(f[7], 63) for f in self.facedef])
+            blen_mesh.update()
 
         blen_mesh.validate(clean_customdata=False)
 

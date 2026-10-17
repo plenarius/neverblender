@@ -519,6 +519,20 @@ class NVB_PT_mesh_object(bpy.types.Panel):
 
             row = box.row()
             box.prop(obj.nvb, 'shininess', text='Shininess')
+            box.prop(obj.nvb, 'alpha', text='Alpha')
+
+            split = box.split(factor=0.33)
+            col = split.column()
+            col.label(text='Ambient:')
+            col.label(text='Diffuse:')
+            col.label(text='Specular:')
+            col.label(text='Self-Illumination:')
+            col = split.column()
+            col.prop(obj.nvb, 'ambient', text='')
+            col.prop(obj.nvb, 'diffuse', text='')
+            col.prop(obj.nvb, 'specular', text='')
+            col.prop(obj.nvb, 'selfillum', text='')
+
             box.prop(obj.nvb, 'tilefade', text='Tilefade')
             split = box.split()
             col = split.column()
@@ -556,6 +570,97 @@ class NVB_PT_mesh_object(bpy.types.Panel):
                 # layout.separator()
                 # box = layout.box()
                 # box.label(text='Animmesh Properties')
+
+
+class NVB_PT_collection(bpy.types.Panel):
+    """Property panel for additional setfile.
+
+    This holds all properties neede for tileset set files
+    """
+
+    bl_label = 'Aurora Properties'
+    bl_space_type = 'PROPERTIES'
+    bl_region_type = 'WINDOW'
+    bl_context = 'collection'
+
+    @classmethod
+    def poll(cls, context):
+        """Always draw."""
+        return bool(context.collection)
+
+    def draw(self, context):
+        """Draw the panel."""
+        collection = context.collection
+        layout = self.layout
+
+        box = layout.box()
+        box.label(text='Tileset Group')
+        split = box.split(factor=0.5)
+        col = split.column()
+        col.label(text='Rows')
+        col.label(text='Columns')
+        col = split.column()
+        col.prop(collection.nvb.nfo, 'tile_group_dim', text="")
+
+
+class NVB_PT_object_nfo(bpy.types.Panel):
+    """Property panel for additional setfile.
+
+    This holds all properties neede for tileset set files
+    """
+
+    bl_label = 'Aurora Tileset'
+    bl_space_type = 'PROPERTIES'
+    bl_region_type = 'WINDOW'
+    bl_context = 'object'
+
+    @classmethod
+    def poll(cls, context):
+        """Draw only if part of a valid mdl is selected."""
+        aurora_base = nvb_utils.get_obj_mdl_base(context.object)
+        return aurora_base is not None
+
+    def draw(self, context):
+        """Draw the panel."""
+        aurora_base = nvb_utils.get_obj_mdl_base(context.object)
+        layout = self.layout
+
+        # General Properties
+        box = layout.box()
+        box.label(text='General')
+        box.prop(aurora_base.nvb.nfo, 'tile_id')
+        split = box.split(factor=0.66)
+        col = split.column()
+        col.prop(aurora_base.nvb.nfo, 'tile_pathnode', text="Path")
+        col.prop(aurora_base.nvb.nfo, 'tile_visnode', text="Visibility")
+        col = split.column()
+        col.prop(aurora_base.nvb.nfo, 'tile_pathnode_orientation', text="")
+        col.prop(aurora_base.nvb.nfo, 'tile_visnode_orientation', text="")
+        box.prop(aurora_base.nvb.nfo, 'tile_doors')
+        box.prop(aurora_base.nvb.nfo, 'tile_imagemap2d')
+
+        # Crosser Properties
+        box = layout.box()
+        box.label(text='Crosser')
+        box.prop(aurora_base.nvb.nfo, 'tile_crosser_top')
+        box.prop(aurora_base.nvb.nfo, 'tile_crosser_right')
+        box.prop(aurora_base.nvb.nfo, 'tile_crosser_bottom')
+        box.prop(aurora_base.nvb.nfo, 'tile_crosser_left')
+
+        # Terrain properties
+        box = layout.box()
+        box.label(text='Terrain')
+        split = box.split(factor=0.66)
+        col = split.column()
+        col.prop(aurora_base.nvb.nfo, 'tile_terrain_topright')
+        col.prop(aurora_base.nvb.nfo, 'tile_terrain_bottomright')
+        col.prop(aurora_base.nvb.nfo, 'tile_terrain_bottomleft')
+        col.prop(aurora_base.nvb.nfo, 'tile_terrain_topleft')
+        col = split.column()
+        col.prop(aurora_base.nvb.nfo, 'tile_terrain_topright_height')
+        col.prop(aurora_base.nvb.nfo, 'tile_terrain_bottomright_height')
+        col.prop(aurora_base.nvb.nfo, 'tile_terrain_bottomleft_height')
+        col.prop(aurora_base.nvb.nfo, 'tile_terrain_topleft_height')
 
 
 class NVB_MT_animlist_specials(bpy.types.Menu):
@@ -737,6 +842,8 @@ class NVB_PT_utils(bpy.types.Panel):
             row = box.row()
             row.prop(addon_prefs, 'util_amt_connect')
             row.prop(addon_prefs, 'util_amt_strip_name')
+            row = box.row()
+            row.prop(addon_prefs, 'util_amt_ignore_invisible')
             box.operator('nvb.amt_psb2amt', icon='BONE_DATA')
             layout.separator()
 

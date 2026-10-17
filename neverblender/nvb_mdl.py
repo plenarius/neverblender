@@ -251,7 +251,7 @@ class Mdl():
                 """
         else:
             # ASCII model, parse directly
-            with open(os.fsencode(mdl_filepath), 'r') as f:
+            with open(os.fsencode(mdl_filepath), 'r', encoding="latin-1") as f:
                 self.read_ascii_mdl(f.read(), options)
 
     def parse_wkm(self, wkm_filepath, wkm_type, options):
@@ -266,7 +266,7 @@ class Mdl():
                 # (on Windows access to the tempfile will be blocked after running the decompiler)
                 tf = tempfile.NamedTemporaryFile(mode="r+", delete=False)
                 try:
-                    run_cmd = Mdl.build_external_decompile_cmd(mdl_filepath, tf.name, options)
+                    run_cmd = Mdl.build_external_decompile_cmd(wkm_filepath, tf.name, options)
                     result = subprocess.run(run_cmd, stdout=subprocess.PIPE)
                     if result.returncode == 0:
                         self.read_ascii_mdl(tf.read(), options)

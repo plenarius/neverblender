@@ -17,11 +17,8 @@ class Mtr(object):
         self.filepath = ''
 
         self.texture_list = [None] * 15
-        self.color_list = [None] * 15
-        self.renderhints = set()
+        self.renderhint = ""
         self.parameters = dict()
-        self.alpha = None
-        self.metallicness = None
         self.customshaderVS = ''  # Vertex shader
         self.customshaderGS = ''  # Geometry shader
         self.customshaderFS = ''  # Fragment shader
@@ -94,7 +91,7 @@ class Mtr(object):
         except (IndexError, AttributeError):
             return  # Probably empty line or comment
         if label == 'renderhint':
-            self.renderhints.add(nvb_utils.str2identifier(line[1]))
+            self.renderhint = line[1]
         elif label == 'parameter':
             try:
                 param_type = line[1].lower()
@@ -104,15 +101,7 @@ class Mtr(object):
                 return
             else:
                 param_value = Mtr.parse_ascii_param_value(param_value)
-                # Try to extract some know parameters for the standard shader
-                if param_name.lower() == "specularity":
-                    self.color_list[2] = [nvb_parse.ascii_float(param_value[0])]*3
-                elif param_name.lower() == "roughness":
-                    self.color_list[3] = nvb_parse.ascii_float(param_value[0])
-                elif param_name.lower() == "displacementoffset":
-                    self.color_list[4] = nvb_parse.ascii_float(param_value[0])
-                else:  # Unknown parameter
-                    self.parameters[param_name] = (param_type, param_value)
+                self.parameters[param_name] = (param_type, param_value)
         elif label == 'customshadervs':
             self.customshaderVS = line[1]
         elif label == 'customshaderfs':
@@ -128,20 +117,20 @@ class Mtr(object):
     def generate_ascii(blen_material, options):
         """Generate a mtr file as asciilines."""
         ascii_lines = []
-        tex_list, col_list, _, _ = Materialnode.get_node_data(blen_material)
+        tex_list = Materialnode.get_texture_list(blen_material)
         # Clean up texture list, delete trailing "null"
         tex_list = [t if t else nvb_def.null for t in tex_list]
         while tex_list and tex_list[-1] == nvb_def.null:
             _ = tex_list.pop()
         # Add shader specification
-        if blen_material.nvb.mtr.shader_vs or blen_material.nvb.mtr.shader_fs:
+        if blen_material.nvb.mtr.shader_vs or blen_material.nvb.mtr.shader_fs or blen_material.nvb.mtr.shader_gs:
             # Custom Shaders
             ascii_lines.append("// Shaders")
-            if blen_material.nvb.shadervs:
+            if blen_material.nvb.mtr.shader_vs:
                 ascii_lines.append("customshaderVS " + blen_material.nvb.mtr.shader_vs)
-            if blen_material.nvb.shaderfs:
+            if blen_material.nvb.mtr.shader_fs:
                 ascii_lines.append("customshaderFS " + blen_material.nvb.mtr.shader_fs)
-            if blen_material.nvb.shadergs:
+            if blen_material.nvb.mtr.shader_gs:
                 ascii_lines.append("customshaderGS " + blen_material.nvb.mtr.shader_gs)
             ascii_lines.append("")
         elif tex_list and (tex_list[:3].count(nvb_def.null) <= 1):
@@ -165,13 +154,6 @@ class Mtr(object):
             param_values = Mtr.parse_ascii_param_value(param.pvalue.strip().split())
             param_id = param_name.lower()
             param_dict[param_id] = [param_name, param_type, param_values]
-        # Manually add known paramters from Blenders shader node tree (overwrite manually added ones)
-        if col_list[2] and (col_list[2][0] > 0.00001):
-            param_dict['specularity'] = ['Specularity', 'float', [str(col_list[2][0])]]
-        if col_list[3] and (col_list[3][0] > 0.00001):
-            param_dict['roughness'] = ['Roughness', 'float', [str(col_list[3][0])]]
-        if col_list[4] and (col_list[4][0] > 0.00001):
-            param_dict['displacementoffset'] = ['DisplacementOffset', 'float', [str(col_list[4][0])]]
         # Write the parameters to MTR
         if len(param_dict) > 0:
             ascii_lines.append("// Parameters")

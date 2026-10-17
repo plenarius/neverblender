@@ -288,7 +288,7 @@ class NVB_OT_amt_amt2psb(bpy.types.Operator):
             dp_list.append(('location', 'Location', 3,
                             convert_loc, (0.0, 0.0, 0.0)))
             dp_list.append(('scale', 'Scale', 3,
-                            convert_scale, (1.0, 1.0, 1.0)))                            
+                            convert_scale, (1.0, 1.0, 1.0)))
             if from_rot_mode == 'AXIS_ANGLE':
                 dp_list.append(('rotation_axis_angle', 'Rotation', 4,
                                 convert_axan, (1.0, 0.0, 0.0, 0.0)))
@@ -604,7 +604,7 @@ class NVB_OT_amt_psb2amt(bpy.types.Operator):
                 return False
         return True
 
-    def create_bones_rec(self, am, psb, auto_connect=False, strip_name=False,
+    def create_bones_rec(self, am, psb, auto_connect=False, strip_name=False, ignore_invisible=False,
                          amb_parent=None, parent_mat=mathutils.Matrix()):
         """TODO: doc."""
         def convert_loc(obj, pmat):
@@ -616,7 +616,7 @@ class NVB_OT_amt_psb2amt(bpy.types.Operator):
         bhead = psb_mat.translation
         # Calculate tail (relative to head)
         btail = bhead + mathutils.Vector([0.0, 0.2, 0.0])  # For Empties
-        valid_children = [c for c in psb.children if self.is_psd_bone(c)]
+        valid_children = [c for c in psb.children if (not (c.hide_get() and ignore_invisible) and self.is_psd_bone(c))]
         if valid_children:
             # Multiple children: Calculate centroid
             clocs = [convert_loc(c, psb_mat).translation
@@ -653,14 +653,14 @@ class NVB_OT_amt_psb2amt(bpy.types.Operator):
         self.generated_bones.append([amb.name, psb, cmat.copy()])
         # Create children
         for c in valid_children:
-            self.create_bones_rec(am, c, auto_connect, strip_name,
+            self.create_bones_rec(am, c, auto_connect, strip_name, ignore_invisible,
                                   amb, psb_mat)
 
-    def create_bones(self, context, am, psb_root, auto_connect, strip_name):
+    def create_bones(self, context, am, psb_root, auto_connect, strip_name, ignore_invisible=False):
         bpy.ops.object.mode_set(mode='EDIT')
         for child in psb_root.children:
-            if self.is_psd_bone(child):
-                self.create_bones_rec(am, child, auto_connect, strip_name)
+            if not (child.hide_get() and ignore_invisible) and self.is_psd_bone(child):
+                self.create_bones_rec(am, child, auto_connect, strip_name, ignore_invisible)
         am.data.edit_bones.update()
         context.evaluated_depsgraph_get().update()
         bpy.ops.object.mode_set(mode='OBJECT')
@@ -772,6 +772,7 @@ class NVB_OT_amt_psb2amt(bpy.types.Operator):
                 # List of valid curves for this data path
                 fcu_list = [meb_fcu.find(data_path=dp, index=i)
                            for i in range(dp_dim)]
+                # Check if there are fcurves for this data path
                 if fcu_list.count(None) < 1:
                     am_dp = 'pose.bones["' + amb_name + '"].' + dp
                     # Get keyed frames
@@ -793,7 +794,7 @@ class NVB_OT_amt_psb2amt(bpy.types.Operator):
                     # Convert from mesh-bone to armature-bone space
                     values = dp_convert(am, amb, meb, values, amb_base)
                     # Create fcurves for armature
-                    amt_fcu = [nvb_utils.get_fcurve(am_action, am_dp, i,
+                    am_fcu = [nvb_utils.get_fcurve(am_action, am_dp, i,
                                                     amb_name)
                                for i in range(dp_dim)]
                     # Adjust for frame range
@@ -801,7 +802,32 @@ class NVB_OT_amt_psb2amt(bpy.types.Operator):
                         min_frame = frame_range[0]
                         frames = [f - min_frame for f in frames]
                     # Add keyframes to fcurves
-                    insert_kfp(amt_fcu, frames, values, dp, dp_dim)
+                    insert_kfp(am_fcu, frames, values, dp, dp_dim)
+        else:
+            # There is no animation data, but we still need to create a single rotation keyframe at frame 0
+            frames = [0.0]  # Insert single frame at 0.0
+            if meb.rotation_mode == 'QUATERNION':
+                dp = "rotation_quaternion"
+                dp_dim = 4
+                values = [list(meb.rotation_quaternion)]
+                values = convert_quat(am, amb, meb, values, amb_base)
+            elif meb.rotation_mode == 'AXIS_ANGLE':
+                dp = "rotation_axis_angle"
+                dp_dim = 4
+                values = [list(meb.rotation_axis_angle)]
+                values = convert_axan(am, amb, meb, values, amb_base)
+            else:  # Euler
+                dp = "rotation_euler"
+                dp_dim = 3
+                values = [list(meb.rotation_euler)]
+                values = convert_eul(am, amb, meb, values, amb_base)
+
+            am_dp = 'pose.bones["' + amb_name + '"].' + dp
+            am_fcu = [nvb_utils.get_fcurve(am_action, am_dp, i, amb_name)
+                      for i in range(dp_dim)]
+            # Add keyframes to fcurves
+            insert_kfp(am_fcu, frames, values, dp, dp_dim)
+            pass
 
     def copy_events(self, amt, amt_action, event_dict):
         """Creates keyframed events from the vevent list that mdls use."""
@@ -910,7 +936,8 @@ class NVB_OT_amt_psb2amt(bpy.types.Operator):
         # Create the bones
         self.create_bones(context, amt, psd_bone_root,
                           addon_prefs.util_amt_connect,
-                          addon_prefs.util_amt_strip_name)
+                          addon_prefs.util_amt_strip_name,
+                          addon_prefs.util_amt_ignore_invisible)
         context.evaluated_depsgraph_get().update()
         self.create_bone_properties(context, amt)  # Second pass necessary
 

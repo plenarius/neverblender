@@ -480,15 +480,19 @@ class NVB_OT_util_nodes_pwk(bpy.types.Operator):
                 collection.objects.link(pwk_obj)
             layer.update()
             # Use modifier to dissolve faces/verts along straight lines
-            modifier = pwk_obj.modifiers.new(name='Decimate', type='DECIMATE')
+            modifier = pwk_obj.modifiers.new(name="Decimate_NVB_PWK", type='DECIMATE')
             modifier.decimate_type = 'DISSOLVE'
             modifier.angle_limit = 0.267  # about 15°
             modifier.use_dissolve_boundaries = True
             # Apply modifier
-            ctx = bpy.context.copy()
+            """
+            ctx = bpy.context #.copy()
             ctx['object'] = pwk_obj
             ctx['modifier'] = modifier
             bpy.ops.object.modifier_apply(ctx, modifier=ctx['modifier'].name)
+            """
+            layer.objects.active  = pwk_obj
+            bpy.ops.object.modifier_apply(modifier="Decimate_NVB_PWK")
         return pwk_obj
 
     @staticmethod

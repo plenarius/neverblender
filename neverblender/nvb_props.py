@@ -23,6 +23,24 @@ def NVB_psb_anim_mode_update(self, context):
         addon.preferences.util_psb_insert_base = True
 
 
+def NVB_set_path_ori_update(self, context):
+    """Make sure orientation is limited to [0,90,180,270]"""
+    if not context.object:
+        return
+    ori = context.object.nvb.nfo.tile_pathnode_orientation
+    if ori not in [0,90,180,270]:
+        context.object.nvb.nfo.tile_pathnode_orientation = min([0,90,180,270], key=lambda x:abs(x-ori))
+
+
+def NVB_set_vis_ori_update(self, context):
+    """Make sure orientation is limited to [0,90,180,270]"""
+    if not context.object:
+        return
+    ori = context.object.nvb.nfo.tile_visnode_orientation
+    if ori not in [0,90,180,270]:
+        context.object.nvb.nfo.tile_visnode_orientation = min([0,90,180,270], key=lambda x:abs(x-ori))
+
+
 class NVB_OT_decompile_detect_options(bpy.types.Operator):
     """Reload set, update current data"""
     bl_idname = 'nvb.decompile_detect_options'
@@ -241,6 +259,9 @@ class NVB_addon_properties(bpy.types.AddonPreferences):
     util_amt_strip_name: bpy.props.BoolProperty(
         name='Strip Trailing', default=False,
         description='Strip trailing numbers from names')
+    util_amt_ignore_invisible: bpy.props.BoolProperty(
+        name='Ignore Invisible', default=False,
+        description='Only use visible meshes')
 
     # Pseudo Bones Helper
     util_psb_insert_base: bpy.props.BoolProperty(
@@ -823,80 +844,105 @@ class NVB_PG_lamp(bpy.types.PropertyGroup):
                                         default=0, options=set())
 
 
-class NVB_PG_object_nfo(bpy.types.PropertyGroup):
-    """Holds additional per object data needed for NFO files.
+class NVB_PG_collection_nfo(bpy.types.PropertyGroup):
+    """Holds additional per object data needed for set files.
 
-    NFO files are used ba external tools and NeverBlender to store additional
-    data for mdl files.
     """
+    tile_group_dim: bpy.props.IntVectorProperty(name="Group Dimension",
+                                               description="Dimson of Tile Group",
+                                               default=[0,0], min=0, soft_max=10, step=1,
+                                               options=set(), size=2)
 
-    # Setfile: Nodes
-    set_tile_pathnode: bpy.props.EnumProperty(name='Pathnode',
-                                              items=nvb_def.pathnodes,
-                                              default=nvb_def.pathnodes[0][0], options=set())
-    set_tile_pathnode_orientation: bpy.props.IntProperty(name="Orientation",
-                                                    description="Pathnode Orientation",
-                                                    default=0, min=0, max=270, step=90,
-                                                    options=set())
-    set_tile_visnode_differs: bpy.props.BoolProperty(name="Differing Visibility Node",
-                                                description="Use a visibility node different from pathnode",
-                                                default=False, options=set())
-    set_tile_visnode_orientation: bpy.props.IntProperty(name="Orientation",
-                                                   description="Visibility Node Orientation",
-                                                   default=0, min=0, max=270, step=90,
-                                                   options=set())
-    set_tile_doornode_differs: bpy.props.BoolProperty(name="Differing Door Node",
-                                                      description="Use a door node different from pathnode",
-                                                      default=False, options=set())
-    set_tile_doornode_orientation: bpy.props.IntProperty(name="Orientation",
-                                                         description="Visibility Node Orientation",
-                                                         default=0, min=0, max=270, step=90,
-                                                         options=set())
-    # Setfile: Height data
-    set_tile_height_offset: bpy.props.IntProperty(name="Height Offset",
-                                                  description="Z-offset to base tile floor",
-                                                  default=0, soft_min=-10, soft_max=20, step=1,
+class NVB_PG_collection(bpy.types.PropertyGroup):
+    """Holds additional per object data needed for set files.
+
+    """
+    nfo: bpy.props.PointerProperty(type=NVB_PG_collection_nfo)
+
+
+class NVB_PG_object_nfo(bpy.types.PropertyGroup):
+    """Holds additional per object data needed for set files.
+
+    """
+    # Setfile: General
+    tile_id: bpy.props.IntProperty(name="Tile Id",
+                                       description="Id in set file, no duplicates allowed. Leave empty to auto generate",
+                                       default=-1, min=-1, step=1,
+                                       options=set())
+    tile_imagemap2d: bpy.props.StringProperty(name="ImageMap2D",
+                                                  description="Minimap Image",
+                                                  default="",
                                                   options=set())
-    set_tile_height_auto: bpy.props.BoolProperty(name="Auto tile height",
-                                                 description="Corner Height from Walkmesh and offset",
-                                                 default=True, options=set())
-    set_tile_height: bpy.props.IntVectorProperty(name="Height",
-                                                 description="Z-offset to base tile floor",
-                                                 default = (0,0,0,0), soft_min=-10, soft_max=20, step=1,
-                                                 size=4, options=set())
-    # Setfile: Tile Crossers
-    set_tile_crosser_top: bpy.props.StringProperty(name="Top",
-                                                   description="Crosser: Top",
-                                                   default="",
-                                                   options=set())
-    set_tile_crosser_right: bpy.props.StringProperty(name="Right",
-                                                     description="Crosser: Right",
-                                                     default="",
+    tile_doors: bpy.props.IntProperty(name="Doors",
+                                          description="Number fo doors on this tile",
+                                          default=0, min=0, soft_max=10, step=1,
+                                          options=set())
+    # Setfile: Nodes
+    tile_pathnode: bpy.props.EnumProperty(name='Pathnode',
+                                          items=nvb_def.pathnodes,
+                                          default=nvb_def.pathnodes[0][0], options=set())
+    tile_pathnode_orientation: bpy.props.IntProperty(name="Orientation",
+                                                     description="Pathnode Orientation",
+                                                     default=0, min=0, max=270, step=90,
+                                                     update=NVB_set_path_ori_update,
                                                      options=set())
-    set_tile_crosser_bottom: bpy.props.StringProperty(name="Bottom",
-                                                      description="Crosser: Bottom",
-                                                      default="",
-                                                      options=set())
-    set_tile_crosser_bottom: bpy.props.StringProperty(name="Bottom",
-                                                      description="Crosser: Bottom",
-                                                      default="",
-                                                      options=set())
+    tile_visnode: bpy.props.EnumProperty(name='Visibility Node',
+                                         items=nvb_def.pathnodes,
+                                         default=nvb_def.pathnodes[0][0], options=set())
+    tile_visnode_orientation: bpy.props.IntProperty(name="Orientation",
+                                                    description="Visibility Node Orientation",
+                                                    default=0, min=0, max=270, step=90,
+                                                    update=NVB_set_vis_ori_update,
+                                                    options=set())
+    # Setfile: Tile Crossers
+    tile_crosser_top: bpy.props.StringProperty(name="Top",
+                                               description="Crosser: Top",
+                                               default="",
+                                               options=set())
+    tile_crosser_right: bpy.props.StringProperty(name="Right",
+                                                 description="Crosser: Right",
+                                                 default="",
+                                                 options=set())
+    tile_crosser_bottom: bpy.props.StringProperty(name="Bottom",
+                                                  description="Crosser: Bottom",
+                                                  default="",
+                                                  options=set())
+    tile_crosser_left: bpy.props.StringProperty(name="Left",
+                                                description="Crosser: Left",
+                                                default="",
+                                                options=set())
     # Setfile: Tile Neighbouring Terrains
-    set_tile_terrain_topleft: bpy.props.StringProperty(name="Top Left",
-                                                       description="Terrain: Top Left",
-                                                       default="",
+    tile_terrain_topleft: bpy.props.StringProperty(name="Top Left",
+                                                   description="Terrain: Top Left",
+                                                   default="INVALID",
+                                                   options=set())
+    tile_terrain_topleft_height: bpy.props.IntProperty(name="Height",
+                                                       description="Height at top left",
+                                                       default=0, soft_min=0, max=10, step=1,
                                                        options=set())
-    set_tile_terrain_bottomleft: bpy.props.StringProperty(name="Bottom Left",
-                                                          description="Terrain: Bottom Left",
-                                                          default="",
+    tile_terrain_bottomleft: bpy.props.StringProperty(name="Bottom Left",
+                                                      description="Terrain: Bottom Left",
+                                                      default="INVALID",
+                                                      options=set())
+    tile_terrain_bottomleft_height: bpy.props.IntProperty(name="Height",
+                                                          description="Height at bottom left",
+                                                          default=0, soft_min=0, max=10, step=1,
                                                           options=set())
-    set_tile_terrain_bottomright: bpy.props.StringProperty(name="Bottom Right",
-                                                           description="Terrain: Bottom Right",
-                                                           default="",
+    tile_terrain_bottomright: bpy.props.StringProperty(name="Bottom Right",
+                                                       description="Terrain: Bottom Right",
+                                                       default="INVALID",
+                                                       options=set())
+    tile_terrain_bottomright_height: bpy.props.IntProperty(name="Height",
+                                                           description="Height at bottom right",
+                                                           default=0, soft_min=0, max=10, step=1,
                                                            options=set())
-    set_tile_terrain_topright: bpy.props.StringProperty(name="Top Right",
-                                                        description="Terrain: Top Right",
-                                                        default="",
+    tile_terrain_topright: bpy.props.StringProperty(name="Top Right",
+                                                    description="Terrain: Top Right",
+                                                    default="INVALID",
+                                                    options=set())
+    tile_terrain_topright_height: bpy.props.IntProperty(name="Height",
+                                                        description="Height at top right",
+                                                        default=0, soft_min=0, max=10, step=1,
                                                         options=set())
 
 
@@ -1147,15 +1193,39 @@ class NVB_PG_object(bpy.types.PropertyGroup):
                 name='Transparency Hint',
                 description='Order of transparency evaluation',
                 default=0, min=0, max=32, options=set())
-    selfillumcolor: bpy.props.FloatVectorProperty(
-                name='Selfilluminationcolor',
+    # material data coming from mdl
+    shininess: bpy.props.IntProperty(name='Shininess',
+                                     description='Used with txi file',
+                                     default=1, min=0, max=32, options=set())
+    alpha: bpy.props.FloatProperty(
+                name='Alpha', subtype='TIME', options={'ANIMATABLE'},
+                description='Alpha coming from mesh',
+                default=1.0, min=0.0, max=1.0)
+    ambient: bpy.props.FloatVectorProperty(
+                name='Ambient color',
+                description='',
+                subtype='COLOR_GAMMA',
+                default=(1.0, 1.0, 1.0), options={'ANIMATABLE'},
+                min=0.0, max=2.0, soft_min=0.0, soft_max=1.0)
+    diffuse: bpy.props.FloatVectorProperty(
+                name='Diffuse color',
+                description='',
+                subtype='COLOR_GAMMA',
+                default=(1.0, 1.0, 1.0), options={'ANIMATABLE'},
+                min=0.0, max=2.0, soft_min=0.0, soft_max=1.0)
+    specular: bpy.props.FloatVectorProperty(
+                name='Specular color',
+                description='',
+                subtype='COLOR_GAMMA',
+                default=(0.0, 0.0, 0.0), options={'ANIMATABLE'},
+                min=0.0, max=2.0, soft_min=0.0, soft_max=1.0)
+    selfillum: bpy.props.FloatVectorProperty(
+                name='Selfillumination color',
                 description='Makes the object glow but does not emit light',
                 subtype='COLOR_GAMMA',
                 default=(0.0, 0.0, 0.0), options={'ANIMATABLE'},
                 min=0.0, max=2.0, soft_min=0.0, soft_max=1.0)
-    shininess: bpy.props.IntProperty(name='Shininess',
-                                     description='Used with txi file',
-                                     default=1, min=0, max=32, options=set())
+
     # For Animeshes
     aurorashapekey: bpy.props.StringProperty(
         name='Shapekey',

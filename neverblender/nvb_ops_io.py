@@ -273,7 +273,7 @@ class NVB_OT_mdlimport(bpy.types.Operator, bpy_extras.io_utils.ImportHelper):
         description='Path used for importing the file',
         type=bpy.types.OperatorFileListElement)
     directory: bpy.props.StringProperty()
-    filter_glob: bpy.props.StringProperty(default='*.mdl', options={'HIDDEN'})
+    filter_glob: bpy.props.StringProperty(default='*.mdl;*.mdl.txt', options={'HIDDEN'})
     filename_ext = '.mdl'
 
     import_walkmesh: bpy.props.BoolProperty(
@@ -506,8 +506,7 @@ class NVB_OT_mdlimport(bpy.types.Operator, bpy_extras.io_utils.ImportHelper):
         return self.mdl_import(context, options)
 
 
-class NVB_OT_mdl_superimport(bpy.types.Operator,
-                             bpy_extras.io_utils.ImportHelper):
+class NVB_OT_mdl_superimport(bpy.types.Operator, bpy_extras.io_utils.ImportHelper):
     """Import animations from supermodel onto existing mdl"""
     bl_idname = 'scene.nvb_superimport'
     bl_label = 'Import Supermodel'
@@ -517,7 +516,7 @@ class NVB_OT_mdl_superimport(bpy.types.Operator,
         description='Path used for importing the file',
         type=bpy.types.OperatorFileListElement)
     directory: bpy.props.StringProperty()
-    filter_glob: bpy.props.StringProperty(default='*.mdl', options={'HIDDEN'})
+    filter_glob: bpy.props.StringProperty(default='*.mdl;*.mdl.txt', options={'HIDDEN'})
     filename_ext = '.mdl'
 
     anim_fps_use: bpy.props.BoolProperty(name='Use Custom fps',
@@ -596,6 +595,177 @@ class NVB_OT_mdl_superimport(bpy.types.Operator,
         options.anim_restpose = self.anim_restpose
         options.anim_ignore_existing = self.anim_ignore_existing
         return self.mdl_import(context, options)
+
+    def invoke(self, context, event):
+        wm = context.window_manager
+        wm.fileselect_add(self)
+
+        return {'RUNNING_MODAL'}
+
+
+class NVB_OT_setexport(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
+    """Import animations from supermodel onto existing mdl"""
+    bl_idname = 'scene.nvb_setexport'
+    bl_label = 'Export Setfile'
+    bl_options = {'PRESET'}
+
+    filename_ext = '.set'
+    filter_glob: bpy.props.StringProperty(
+            default='*.set',
+            options={'HIDDEN'})
+
+    # Export options
+    selected_only: bpy.props.BoolProperty(
+            name='Selected only',
+            description='Export selected tiles only',
+            default=False)
+    ignore_classification: bpy.props.BoolProperty(
+            name='Ignore Classification',
+            description='If disabled, only exports MDLs with "tile" classification',
+            default=True)
+    strip_trailing: bpy.props.BoolProperty(
+            name='Strip Trailing Numbers',
+            description='Remove trailing numbers from object names',
+            default=False)
+    ignore_stored_tile_id: bpy.props.BoolProperty(
+            name='Ignore stored tile Id',
+            description='Ignore stored tile id and re-assign all tile ids',
+            default=True)
+    store_tile_id: bpy.props.BoolProperty(
+            name='Store tile Id',
+            description='Store assigned tile Id on models for re-export',
+            default=False)
+    collections_as_groups: bpy.props.BoolProperty(
+            name='Collections As Groups',
+            description='Use collections to generate tile groups, see collection properties',
+            default=True)
+    # setfile general options
+    internal_name: bpy.props.StringProperty(
+            name='Name',
+            description='Internal Name',
+            default="ttt99")
+    is_interior: bpy.props.BoolProperty(
+            name='Interior',
+            description='Interior',
+            default=False)
+    has_height_transition: bpy.props.BoolProperty(
+            name='Height Transition',
+            description='If the tileset uses raise/lower',
+            default=False)
+    env_map: bpy.props.StringProperty(
+            name='Environment Map',
+            description='Environment Map',
+            default="ttr01__ref01")
+    transition: bpy.props.IntProperty(
+            name='Transition',
+            description='The height difference of model placed (in meters) at Height 0 and Height 1.',
+            default=5, min=0, step=1)
+    selector_height: bpy.props.IntProperty(
+            name='Selector Height',
+            description='Defines the height of the green wireframe cube when using selections in the toolset.',
+            default=5, min=1, soft_max=20, step=1)
+    displayname: bpy.props.IntProperty(
+            name='Diplay Name',
+            description='References an entry in dialog.tlk.',
+            default=-1, min=-1)
+    unlocalized_name: bpy.props.StringProperty(
+            name='Unlocalized Name',
+            description='Avoids having to use a dialog tlk entry. Set Display Name to -1 to enable.',
+            default="MY_TILESET_NAME")
+    # setfile grass options
+    grass: bpy.props.BoolProperty(
+            name='Grass',
+            description='Toggle grass',
+            default=False)
+    grass_texture: bpy.props.StringProperty(
+            name='Texture',
+            description='Image for Grass Texture.',
+            default="grass")
+    grass_density: bpy.props.FloatProperty(
+            name='Density',
+            description='Grass Density',
+            default=5.0, min=0.1, soft_max=10.0, step=0.1)
+    grass_height: bpy.props.FloatProperty(
+            name='Height',
+            description='Grass Height',
+            default=1.2, min=0.1, soft_max=10.0, step=0.1)
+
+    @classmethod
+    def poll(self, context):
+        """Alwys possible (will produce empty setfile)."""
+        return True
+
+    def draw(self, context):
+        """Draw the export UI."""
+        layout = self.layout
+
+        # Export settings
+        box = layout.box()
+        box.prop(self, 'selected_only')
+        box.prop(self, 'ignore_classification')
+        box.prop(self, 'strip_trailing')
+        box.prop(self, 'ignore_stored_tile_id')
+        box.prop(self, 'store_tile_id')
+        box.prop(self, 'collections_as_groups')
+
+        # General Settings
+        box = layout.box()
+        box.prop(self, 'internal_name')
+        box.prop(self, 'is_interior')
+        box.prop(self, 'has_height_transition')
+        box.prop(self, 'env_map')
+        box.prop(self, 'transition')
+        box.prop(self, 'selector_height')
+        box.prop(self, 'displayname')
+        sub = box.column()  # only enable if normals are enabled
+        sub.enabled = (self.displayname == -1)
+        sub.prop(self, 'unlocalized_name')
+        #Grass
+        box = layout.box()
+        box.prop(self, 'grass')
+        sub = box.column()  # only enable if normals are enabled
+        sub.enabled = (self.grass)
+        sub.prop(self, 'grass_texture')
+        sub.prop(self, 'grass_density')
+        sub.prop(self, 'grass_height')
+
+
+    def execute(self, context):
+        """Export setfile."""
+        obj_list = []
+        if self.selected_only == 'SCN':
+            obj_list = bpy.context.selected_objects
+        else:
+            obj_list = bpy.context.scene.collection.all_objects
+
+        mdl_list = []
+        for obj in obj_list:
+            base = nvb_utils.get_obj_mdl_base(obj)
+            if base and (self.ignore_classification or base.nvb.classification == 'tile') and (base not in mdl_list):
+                mdl_list.append(base)
+
+        ascii_setfile = nvb_utils.create_setfile(mdl_list,
+                                                 self.ignore_stored_tile_id,
+                                                 self.store_tile_id,
+                                                 self.strip_trailing,
+                                                 self.collections_as_groups,
+                                                 self.internal_name,
+                                                 self.is_interior,
+                                                 self.has_height_transition,
+                                                 self.env_map,
+                                                 self.transition,
+                                                 self.selector_height,
+                                                 self.displayname,
+                                                 self.unlocalized_name,
+                                                 self.grass,
+                                                 self.grass_texture,
+                                                 self.grass_density,
+                                                 self.grass_height)
+
+        with open(os.fsencode(self.filepath), 'w', newline='\r\n') as f:
+            f.write('\n'.join(ascii_setfile))
+
+        return {'FINISHED'}
 
     def invoke(self, context, event):
         wm = context.window_manager

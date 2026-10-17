@@ -440,7 +440,7 @@ class NVB_OT_anim_pad(bpy.types.Operator):
                 for ev in a.eventList:
                     ev.frame += int(totalPadding)
         # Update the target animation itself
-        anim.frameEnd += int(totalPadding)
+        anim.frameEnd += totalPadding
         for ev in anim.eventList:
             ev.frame += int(self.pad_front)
         # Re-adjust the timeline to the new bounds

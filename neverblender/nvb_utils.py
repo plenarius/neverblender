@@ -262,7 +262,7 @@ def get_wkm_base(mdl_base, wkmtype):
     return None
 
 
-def create_wok_materials(mesh, update_existing=False):
+def create_wok_materials(mesh, update_existing=False, pad_to=0):
     """Adds walkmesh materials to the object."""
     # Add walkmesh materials
     for matname, matcolor in nvb_def.wok_materials:
@@ -282,8 +282,27 @@ def create_wok_materials(mesh, update_existing=False):
 
         mesh.materials.append(mat)
 
+    if pad_to > len(nvb_def.wok_materials):
+        for i in range(len(nvb_def.wok_materials), pad_to+1):
+            matname = "wok_unknown"+str(i)
+            matcolor = (0.500, 0.000, 1.000, 1.0)
+            if matname in bpy.data.materials.keys():
+                mat = bpy.data.materials[matname]
+                mat_exists = True
+            else:
+                mat = bpy.data.materials.new(matname)
+                mat_exists = False
+
+            if not mat_exists or update_existing:
+                mat.diffuse_color = matcolor
+                mat.specular_intensity = 0.0
+                mat.roughness = 1.0
+                mat.use_backface_culling = True
+
+            mesh.materials.append(mat)
+
     mesh.materials.update()
-    return len(mesh.materials) == len(nvb_def.wok_materials)
+    return len(mesh.materials) == max(len(nvb_def.wok_materials), pad_to+1)
 
 
 def get_children_recursive(obj, obj_list):
@@ -461,8 +480,7 @@ def amt_event_list_item_create(amt, event_name):
     action = anim_data.action
     if not action:
         action = bpy.data.actions.new(amt.name)
-    data_path = 'nvb.amt_event_list[' + str(amt.nvb.amt_event_list_idx) + \
-                '].fire'
+    data_path = 'nvb.amt_event_list[' + str(amt.nvb.amt_event_list_idx) + '].fire'
     fcu = get_fcurve(action, data_path, 0, 'Events')
     fcu.group = action.groups['Events']  # force group
 
@@ -480,8 +498,7 @@ def amt_event_list_init(amt):
 
 def create_anim_list_item(mdl_base, check_keyframes=False):
     """Append a new animation at the and of the animation list."""
-    last_frame = max([nvb_def.anim_globstart] +
-                     [a.frameEnd for a in mdl_base.nvb.animList])
+    last_frame = max([nvb_def.anim_globstart] + [a.frameEnd for a in mdl_base.nvb.animList])
     if check_keyframes:
         last_frame = max(last_frame, get_last_keyframe(mdl_base))
     anim = mdl_base.nvb.animList.add()
@@ -671,3 +688,277 @@ def correct_emitter_parameters(param):
     if param in correct:
         return correct[param]
     return param
+
+
+def create_setfile(mdl_list, ignore_stored_tile_id, store_tile_id, strip_trailing, collections_as_groups,
+                   internal_name, is_interior, has_height_transition, env_map, transition, selector_height, displayname, unlocalized_name,
+                   grass, grass_texture, grass_density, grass_height):
+
+    def atoi(text):
+        return int(text) if text.isdigit() else text
+
+    def natural_keys(text):
+        return [atoi(c) for c in re.split(r'(\d+)', text)]
+
+    tiles = []
+    tile_ids = dict()
+    if ignore_stored_tile_id:
+        # Re create all tile IDs, we just sort by model name
+        tiles = sorted(mdl_list, key=lambda x: natural_keys(x.name))
+        # Save them, if option is set
+        if store_tile_id:
+            for i, mdl in enumerate(tiles):
+                mdl.nvb.nfo.tile_id = i
+
+        for i, mdl in enumerate(tiles):
+            tile_ids[mdl.name] = i
+    else:
+        # Keep existing tiles IDs at their old position
+        # This may result in holes represented by None
+        reserved_ids = [(mdl.nvb.nfo.tile_id, mdl) for mdl in mdl_list if mdl.nvb.nfo.tile_id >= 0]
+        if reserved_ids:
+            tiles = [None] * max(max(reserved_ids, key=lambda x: x[0])[0]+1, len(mdl_list))
+            # Add tiles with reserved IDs
+            for tile_id, mdl in reserved_ids:
+                tiles[tile_id] = mdl
+                tile_ids[mdl.name] = tile_id
+        else:
+            tiles = [None] * len(mdl_list)
+
+        # Add tiles without IDs
+        i = 0
+        for mdl in sorted(mdl_list, key=lambda x: natural_keys(x.name)):
+            # tile id < 0 are invalid, that means we auto assign a number
+            if mdl.nvb.nfo.tile_id < 0:
+                # Look for an empty spot to place this mdl
+                while tiles[i] is not None:
+                    i += 1
+                tiles[i] = mdl
+                tile_ids[mdl.name] = i
+
+                if store_tile_id:
+                    mdl.nvb.nfo.tile_id = i
+
+    # Gather list of unique terrains
+    terrains = set()
+    terrains.update([mdl.nvb.nfo.tile_terrain_topleft for mdl in mdl_list])
+    terrains.update([mdl.nvb.nfo.tile_terrain_topright for mdl in mdl_list])
+    terrains.update([mdl.nvb.nfo.tile_terrain_bottomright for mdl in mdl_list])
+    terrains.update([mdl.nvb.nfo.tile_terrain_bottomleft for mdl in mdl_list])
+    # Terrains must be defined for every tile, i.e. can't be empty
+    # Missing ones (=Empty String) must be defined, we're replace empty strings with "INVALID"
+    if "" in terrains:
+        terrains.remove("")
+        if "INVALID" not in terrains:
+            terrains.add("INVALID")
+
+    # Gather list of unique crossers
+    crossers = set()
+    crossers.update([mdl.nvb.nfo.tile_crosser_top for mdl in mdl_list])
+    crossers.update([mdl.nvb.nfo.tile_crosser_right for mdl in mdl_list])
+    crossers.update([mdl.nvb.nfo.tile_crosser_bottom for mdl in mdl_list])
+    crossers.update([mdl.nvb.nfo.tile_crosser_left for mdl in mdl_list])
+    # Crossers may be undefined: We just the remove empty strings
+    crossers.discard("")
+
+    # Header
+    ascii_lines = []
+    ascii_lines.append("; NEVERWINTER NIGHTS TILESET FILE")
+    ascii_lines.append("; DO NOT EDIT MANUALLY - UNLESS YOU KNOW WHAT YOU ARE DOING")
+    ascii_lines.append("")
+
+    # General
+    ascii_lines.append("[GENERAL]")
+    ascii_lines.append("Name={0}".format(internal_name))
+    ascii_lines.append("Type=SET")
+    ascii_lines.append("Version=V1.0")
+    ascii_lines.append("Interior={0:d}".format(is_interior))
+    ascii_lines.append("HasHeightTransition={0:d}".format(has_height_transition))
+    ascii_lines.append("EnvMap={0}".format(env_map))
+    ascii_lines.append("Transition={0:d}".format(transition))
+    ascii_lines.append("SelectorHeight={0:d}".format(selector_height))
+    ascii_lines.append("DisplayName={0:d}".format(displayname))
+    if (displayname == -1):
+        ascii_lines.append("UnlocalizedName={0}".format(unlocalized_name))
+    # If There are valid terrains, select one at random (otherwise just a generic "Grass", can't leave it empty)
+    if terrains:
+        t = next(iter(terrains))
+        ascii_lines.append("Border={0}".format(t))
+        ascii_lines.append("Default={0}".format(t))
+        ascii_lines.append("Floor={0}".format(t))
+    else:
+        ascii_lines.append("Border={0}".format("Grass"))
+        ascii_lines.append("Default={0}".format("Grass"))
+        ascii_lines.append("Floor={0}".format("Grass"))
+    ascii_lines.append("")
+
+    # Grass
+    ascii_lines.append("[GRASS]")
+    ascii_lines.append("Grass={0:d}".format(grass))
+    if grass:
+        ascii_lines.append("GrassTextureName={0}".format(grass_texture))
+        ascii_lines.append("Density={0:.3}".format(grass_density))
+        ascii_lines.append("Height={0:.3}".format(grass_height))
+        ascii_lines.append("AmbientRed={0:.3}".format(0.5))
+        ascii_lines.append("AmbientGreen={0:.3}".format(0.6))
+        ascii_lines.append("AmbientBlue={0:.3}".format(0.3))
+        ascii_lines.append("DiffuseRed={0:.3}".format(0.5))
+        ascii_lines.append("DiffuseGreen={0:.3}".format(0.6))
+        ascii_lines.append("DiffuseBlue={0:.3}".format(0.3))
+    ascii_lines.append("")
+
+    # Terrain types
+    ascii_lines.append("[TERRAIN TYPES]")
+    ascii_lines.append("Count={0:d}".format(len(terrains)))
+    ascii_lines.append("")
+    for i, t in enumerate(sorted(terrains)):
+        ascii_lines.append("[TERRAIN{0}]".format(i))
+        ascii_lines.append("Name={0}".format(t))
+        ascii_lines.append("StrRef={0:d}".format(0))  # "Bad Strref"
+        ascii_lines.append("")
+
+    # Crosser types
+    ascii_lines.append("[CROSSER TYPES]")
+    ascii_lines.append("Count={0:d}".format(len(crossers)))
+    ascii_lines.append("")
+    for i, c in enumerate(sorted(crossers)):
+        ascii_lines.append("[CROSSER{0}]".format(i))
+        ascii_lines.append("Name={0}".format(c))
+        ascii_lines.append("StrRef={0:d}".format(0))  # "Bad Strref"
+        ascii_lines.append("")
+
+    # Primary Rules (Always 0, we don't do this)
+    ascii_lines.append("[PRIMARY RULES]")
+    ascii_lines.append("Count={0:d}".format(0))
+    ascii_lines.append("")
+
+    # Secondary Rules (Always 0, unused)
+    ascii_lines.append("[SECONDARY RULES]")
+    ascii_lines.append("Count={0:d}".format(0))
+    ascii_lines.append("")
+
+    # Tiles
+    ascii_lines.append("[TILES]")
+    ascii_lines.append("Count={0:d}".format(len(tiles)))
+    ascii_lines.append("")
+    for tile_id, blen_obj in enumerate(tiles):
+        # Might be None, which means padding
+        if blen_obj:
+            ascii_lines.append("[TILE{0:d}]".format(tile_id))
+            if strip_trailing:
+                ascii_lines.append("Model={0}".format(strip_trailing_numbers(blen_obj.name)))
+            else:
+                ascii_lines.append("Model={0}".format(blen_obj.name))
+            ascii_lines.append("WalkMesh={0}".format("msb01"))
+            # Terrain
+            ascii_lines.append("TopLeft={0}".format(blen_obj.nvb.nfo.tile_terrain_topleft if blen_obj.nvb.nfo.tile_terrain_topleft else "INVALID"))
+            ascii_lines.append("TopLeftHeight={0}".format(blen_obj.nvb.nfo.tile_terrain_topleft_height))
+            ascii_lines.append("TopRight={0}".format(blen_obj.nvb.nfo.tile_terrain_topright if blen_obj.nvb.nfo.tile_terrain_topright else "INVALID"))
+            ascii_lines.append("TopRightHeight={0}".format(blen_obj.nvb.nfo.tile_terrain_topright_height))
+            ascii_lines.append("BottomLeft={0}".format(blen_obj.nvb.nfo.tile_terrain_bottomleft if blen_obj.nvb.nfo.tile_terrain_bottomleft else "INVALID"))
+            ascii_lines.append("BottomLeftHeight={0}".format(blen_obj.nvb.nfo.tile_terrain_bottomleft_height))
+            ascii_lines.append("BottomRight={0}".format(blen_obj.nvb.nfo.tile_terrain_bottomright if blen_obj.nvb.nfo.tile_terrain_bottomright else "INVALID"))
+            ascii_lines.append("BottomRightHeight={0}".format(blen_obj.nvb.nfo.tile_terrain_bottomright_height))
+            # Crosser
+            ascii_lines.append("Top={0}".format(blen_obj.nvb.nfo.tile_crosser_top))
+            ascii_lines.append("Right={0}".format(blen_obj.nvb.nfo.tile_crosser_right))
+            ascii_lines.append("Bottom={0}".format(blen_obj.nvb.nfo.tile_crosser_bottom))
+            ascii_lines.append("Left={0}".format(blen_obj.nvb.nfo.tile_crosser_left))
+            # Lighting + Animation
+            ascii_lines.append("MainLight1={0:d}".format(1))
+            ascii_lines.append("MainLight2={0:d}".format(1))
+            ascii_lines.append("SourceLight1={0:d}".format(1))
+            ascii_lines.append("SourceLight2={0:d}".format(1))
+            ascii_lines.append("AnimLoop1={0:d}".format(0))
+            ascii_lines.append("AnimLoop2={0:d}".format(0))
+            ascii_lines.append("AnimLoop3={0:d}".format(0))
+            #
+            ascii_lines.append("Doors={0:d}".format(blen_obj.nvb.nfo.tile_doors))
+            ascii_lines.append("Sounds={0:d}".format(0))
+            # Path and Visibility nodes
+            ascii_lines.append("PathNode={0}".format(blen_obj.nvb.nfo.tile_pathnode))
+            ascii_lines.append("Orientation={0:d}".format(blen_obj.nvb.nfo.tile_pathnode_orientation))
+            if (blen_obj.nvb.nfo.tile_pathnode != blen_obj.nvb.nfo.tile_visnode):
+                ascii_lines.append("VisibilityNode={0}".format(blen_obj.nvb.nfo.tile_visnode))
+                ascii_lines.append("VisibilityOrientation={0:d}".format(blen_obj.nvb.nfo.tile_visnode_orientation))
+            #
+            ascii_lines.append("ImageMap2D={0}".format(blen_obj.nvb.nfo.tile_imagemap2d))
+            ascii_lines.append("")
+
+            # Add dummy door entries
+            for i in range(blen_obj.nvb.nfo.tile_doors):
+                ascii_lines.append("[TILE{0:d}DOOR{1:d}]".format(tile_id, i))
+                ascii_lines.append("Type={0:d}".format(0))
+                ascii_lines.append("X={0:.3f}".format(0.0))
+                ascii_lines.append("Y={0:.3f}".format(0.0))
+                ascii_lines.append("Z={0:.3f}".format(5.0))
+                ascii_lines.append("Orientation={0:d}".format(90))
+                ascii_lines.append("")
+        else:
+            ascii_lines.append("[TILE{0:d}]".format(tile_id))
+            ascii_lines.append("Model=PADDING")
+            ascii_lines.append("WalkMesh={0}".format("msb01"))
+            # Terrain
+            ascii_lines.append("TopLeft={0}".format("INVALID"))
+            ascii_lines.append("TopLeftHeight=0")
+            ascii_lines.append("TopRight={0}".format("INVALID"))
+            ascii_lines.append("TopRightHeight=0")
+            ascii_lines.append("BottomLeft={0}".format("INVALID"))
+            ascii_lines.append("BottomLeftHeight=0")
+            ascii_lines.append("BottomRight={0}".format("INVALID"))
+            ascii_lines.append("BottomRightHeight=0")
+            # Crosser
+            ascii_lines.append("Top=")
+            ascii_lines.append("Right=")
+            ascii_lines.append("Bottom=")
+            ascii_lines.append("Left=")
+            # Lighting + Animation
+            ascii_lines.append("MainLight1=0")
+            ascii_lines.append("MainLight2=0")
+            ascii_lines.append("SourceLight1=0")
+            ascii_lines.append("SourceLight2=0")
+            ascii_lines.append("AnimLoop1=0")
+            ascii_lines.append("AnimLoop2=0")
+            ascii_lines.append("AnimLoop3=0")
+            #
+            ascii_lines.append("Doors=0")
+            ascii_lines.append("Sounds=0")
+            # Path and Visibility nodes
+            ascii_lines.append("PathNode=A")
+            ascii_lines.append("Orientation=0")
+            #
+            ascii_lines.append("ImageMap2D=")
+            ascii_lines.append("")
+
+    # Groups
+    ascii_lines.append("[GROUPS]")
+    if collections_as_groups:
+        # Only consider leaves and collections with objects in them and rows & columns defined
+        coll_list = [coll for coll in bpy.data.collections if coll.objects and coll.nvb.nfo.tile_group_dim[0] > 0 and coll.nvb.nfo.tile_group_dim[1] > 0]
+        ascii_lines.append("Count={0:d}".format(len(coll_list)))
+        ascii_lines.append("")
+        for i, coll in enumerate(coll_list):
+            ascii_lines.append("[GROUP{0:d}]".format(i))
+            ascii_lines.append("Name={0}".format(generate_mdl_identifier(coll.name)))
+            ascii_lines.append("StrRef={0:d}".format(0))  # "Bad Strref"
+            ascii_lines.append("Rows={0:d}".format(coll.nvb.nfo.tile_group_dim[0]))
+            ascii_lines.append("Columns={0:d}".format(coll.nvb.nfo.tile_group_dim[1]))
+            # Get mdl bases in this collection
+            mdl_base_list = [obj for obj in coll.objects if is_mdl_base(obj)]
+            mdl_base_list.sort(key=lambda x: natural_keys(x.name))
+            req_tiles = coll.nvb.nfo.tile_group_dim[0] * coll.nvb.nfo.tile_group_dim[1]
+            num_tiles = len(mdl_base_list[:req_tiles])
+            # Make sure not to exceed rows*cols
+            for j, obj in enumerate(mdl_base_list[:req_tiles]):
+                ascii_lines.append("Tile{0:d}={1:d}".format(j, tile_ids[obj.name]))
+            # Make sure to have at least rows*cols tiles. Fill missing ones with Tile-1 (any tile)
+            if req_tiles > num_tiles:
+                for j in range(num_tiles, req_tiles):
+                    ascii_lines.append("Tile{0:d}={1:d}".format(j,-1))
+            del mdl_base_list
+            ascii_lines.append("")
+    else:
+        ascii_lines.append("Count={0:d}".format(0))
+        ascii_lines.append("")
+
+    return ascii_lines
