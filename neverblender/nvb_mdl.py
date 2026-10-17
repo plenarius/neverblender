@@ -240,8 +240,12 @@ class Mdl():
                         # Let the compiler do its work
                         result = subprocess.run(run_cmd, stdout=subprocess.PIPE, cwd=working_dir)
                         if result.returncode == 0:
-                            # If succesful pass the resulting file to the ascii parser
-                            self.read_ascii_mdl(tf.read(), options)
+                            # If succesful pass the resulting file to the ascii parser.
+                            # Open it again: a decompiler that writes a new file and
+                            # renames it over the old one (cleanmodels 4) leaves tf
+                            # on the original binary.
+                            with open(os.fsencode(tmp_filepath), 'r', encoding="latin-1") as f:
+                                self.read_ascii_mdl(f.read(), options)
                             decompiled = True
                         else:
                             print("Neverblender: ERROR - External decompiler returned error.")

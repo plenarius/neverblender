@@ -69,7 +69,12 @@ class NVB_OT_decompile_detect_options(bpy.types.Operator):
         # Known compilers are: cleanmodels and nwnmdlcomp
         compile_cmd = []
         if "cleanmodels" in compiler_filename.lower():
-            compile_cmd = ["-d", "-i", "%in_dir%", "-o", "%out_dir%", "-p", "%in_filename%"]
+            if nvb_cleanmodels.version_of(os.path.abspath(compiler_path)):
+                # cleanmodels 4 (it answers --version; CleanModels 3 does not)
+                compile_cmd = ["decompile", "--overwrite", "%in_path%", "%out_path%"]
+            else:
+                # CleanModels 3
+                compile_cmd = ["-d", "-i", "%in_dir%", "-o", "%out_dir%", "-p", "%in_filename%"]
         elif "nwnmdlcomp" in compiler_filename.lower():
             compile_cmd = ["-d", "%in_path%", "%out_path%"]
         else:
