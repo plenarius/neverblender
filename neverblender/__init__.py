@@ -40,6 +40,8 @@ from . import nvb_ops_anim
 from . import nvb_ops_set
 from . import nvb_ops_amt
 from . import nvb_ops_node
+from . import nvb_plt
+from . import nvb_plt_autoreload
 
 from . import nvb_ui
 
@@ -69,6 +71,8 @@ if 'bpy' in locals():
         importlib.reload(nvb_ops_set)
         importlib.reload(nvb_ops_amt)
         importlib.reload(nvb_ops_node)
+        importlib.reload(nvb_plt)
+        importlib.reload(nvb_plt_autoreload)
         # reload UI
         importlib.reload(nvb_ui)
         # stdout message because I'm paranoid
@@ -79,8 +83,8 @@ if 'bpy' in locals():
 bl_info = {
     "name": "Neverblender",
     "author": "Attila Gyoerkoes",
-    'version': (4, 1, 0),
-    "blender": (4, 0, 0),
+    'version': (5, 0, 0),
+    "blender": (5, 0, 0),
     "location": "File > Import-Export, Object Properties",
     "description": "Import, export and edit Aurora mdl format",
     "warning": "",
@@ -120,6 +124,7 @@ neverblender_classes = (
     nvb_ops_io.NVB_OT_mdlimport,
     nvb_ops_io.NVB_OT_mdl_superimport,
     nvb_ops_io.NVB_OT_setexport,
+    nvb_ops_io.NVB_OT_phenotype_batch_export,
 
     nvb_ops_set.NVB_OT_set_reload,
     nvb_ops_set.NVB_OT_set_open,
@@ -140,6 +145,7 @@ neverblender_classes = (
 
     nvb_ops_amt.NVB_OT_amt_apply_pose,
     nvb_ops_amt.NVB_OT_amt_amt2psb,
+    nvb_ops_amt.NVB_OT_amt_update_anim,
     nvb_ops_amt.NVB_OT_amt_psb2amt,
 
     nvb_ops_mtr.NVB_OT_mtrparam_new,
@@ -180,18 +186,25 @@ neverblender_classes = (
     nvb_ui.NVB_PT_emitter,
     nvb_ui.NVB_PT_collection,
     nvb_ui.NVB_PT_object_nfo,
+
+    nvb_plt.NVB_OT_plt_import,
+    nvb_plt.NVB_OT_plt_export,
+    nvb_plt.NVB_OT_plt_setup,
 )
 
 
 def menu_func_export(self, context):
     """Helper to register a Menu element."""
     self.layout.operator(nvb_ops_io.NVB_OT_mdlexport.bl_idname, text="Aurora Model (.mdl)")
+    self.layout.operator(nvb_ops_io.NVB_OT_phenotype_batch_export.bl_idname, text="Aurora Phenotypes (.mdl)")
     self.layout.operator(nvb_ops_io.NVB_OT_setexport.bl_idname, text="Aurora Setfile (.set)")
+    self.layout.operator(nvb_plt.NVB_OT_plt_export.bl_idname, text="NWN PLT Texture (.plt)")
 
 
 def menu_func_import(self, context):
     """Helper to register a Menu element."""
     self.layout.operator(nvb_ops_io.NVB_OT_mdlimport.bl_idname, text="Aurora Model (.mdl)")
+    self.layout.operator(nvb_plt.NVB_OT_plt_import.bl_idname, text="NWN PLT Texture (.plt)")
 
 
 def register():
@@ -217,10 +230,18 @@ def register():
 
     bpy.types.TOPBAR_MT_file_import.append(menu_func_import)
     bpy.types.TOPBAR_MT_file_export.append(menu_func_export)
+    bpy.types.IMAGE_MT_image.append(nvb_plt.menu_func_setup)
+
+    # Register PLT autoreload timer
+    nvb_plt_autoreload.register()
 
 
 def unregister():
     """Removes properties and UI entries. Called explicitly by Blender."""
+    # Unregister PLT autoreload timer
+    nvb_plt_autoreload.unregister()
+
+    bpy.types.IMAGE_MT_image.remove(nvb_plt.menu_func_setup)
     bpy.types.TOPBAR_MT_file_export.remove(menu_func_export)
     bpy.types.TOPBAR_MT_file_import.remove(menu_func_import)
 

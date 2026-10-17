@@ -90,9 +90,12 @@ class Mtr(object):
             label = line[0].lower()
         except (IndexError, AttributeError):
             return  # Probably empty line or comment
+        if label.startswith('//') or label.startswith('#'):
+            return  # Comment line
         if label == 'renderhint':
             self.renderhint = line[1]
         elif label == 'parameter':
+            # Old format: parameter int/float name value
             try:
                 param_type = line[1].lower()
                 param_name = line[2]
@@ -112,6 +115,19 @@ class Mtr(object):
             if label[7:]:  # 'texture' is followed by a number
                 idx = int(label[7:])
                 self.texture_list[idx] = nvb_parse.ascii_texture(line[1])
+        else:
+            # Try to parse as simple parameter format: name value(s)
+            # e.g., "twosided 1" or "envmaptexture normals"
+            if len(line) >= 2:
+                param_name = label
+                param_values = Mtr.parse_ascii_param_value(line[1:5])
+                if param_values:
+                    # Determine type based on values (int if all are whole numbers)
+                    if all(v == int(v) for v in param_values):
+                        param_type = 'int'
+                    else:
+                        param_type = 'float'
+                    self.parameters[param_name] = (param_type, param_values)
 
     @staticmethod
     def generate_ascii(blen_material, options):
@@ -139,7 +155,8 @@ class Mtr(object):
             ascii_lines.append("renderhint " + blen_material.nvb.mtr.renderhint)
             ascii_lines.append("")
         # Add list of textures
-        if len(tex_list) > 0:
+        # Only export texture0 if there are additional textures (texture1, etc.)
+        if len(tex_list) > 1:
             ascii_lines.append("// Textures")
             fstr = 'texture{:d} {:s}'
             ascii_lines.extend([fstr.format(i, t)
@@ -161,8 +178,8 @@ class Mtr(object):
                 if len(param_values) > 0:
                     if param_type == "int":  # a single int
                         sv = str(int(param_values[0]))
-                        ascii_lines.append("parameter int " + param_name + " " + sv)
+                        ascii_lines.append(param_name + " " + sv)
                     elif param_type == "float":  # up to 4 floats
                         sv = ' '.join([str(v) for v in param_values[:4]])
-                        ascii_lines.append("parameter float " + param_name + " " + sv)
+                        ascii_lines.append(param_name + " " + sv)
         return ascii_lines

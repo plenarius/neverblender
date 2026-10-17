@@ -262,6 +262,12 @@ class NVB_addon_properties(bpy.types.AddonPreferences):
     util_amt_ignore_invisible: bpy.props.BoolProperty(
         name='Ignore Invisible', default=False,
         description='Only use visible meshes')
+    util_amt_hook_skinmeshes: bpy.props.BoolProperty(
+        name='Hook Skinmeshes', default=True,
+        description='Automatically add armature modifier to skinmeshes and parent them to the armature')
+    util_amt_use_world_coords: bpy.props.BoolProperty(
+        name='Use World Coords', default=True,
+        description='Use world coordinates for bone positions (more reliable for imported models)')
 
     # Pseudo Bones Helper
     util_psb_insert_base: bpy.props.BoolProperty(
@@ -306,6 +312,11 @@ class NVB_addon_properties(bpy.types.AddonPreferences):
                ('CURSOR', "3D cursor", "Only Slice Walkmeshes", 1)],
         default='AUTO')
 
+    # PLT Autoreload
+    plt_autoreload_enabled: bpy.props.BoolProperty(
+        name='PLT Autoreload', default=False,
+        description='Automatically reload PLT files when changes are detected (every 5 seconds)')
+
     def draw(self, context):
         """Draw the addon prefences."""
         # Three colums: General, Import, Export
@@ -325,6 +336,7 @@ class NVB_addon_properties(bpy.types.AddonPreferences):
         box.label(text="Materials")
         box.prop(self, 'mat_displacement_mode')
         box.prop(self, 'import_mat_lowercase')
+        box.prop(self, 'import_mat_mtr')
         box.prop(self, 'import_ignore_mdl_diffuse_color', text="Ignore Diffuse")
         box.prop(self, 'import_ignore_mdl_specular_color', text="Ignore Specular")
         box.prop(self, 'import_ignore_mdl_ambient_color', text="Ignore Ambient")
@@ -365,6 +377,11 @@ class NVB_addon_properties(bpy.types.AddonPreferences):
         sub = box.column()
         sub.active = self.export_smoothgroups_binary
         sub.prop(self, 'export_smoothgroups_distinct_verts')
+
+        # PLT Autoreload section
+        box = col.box()
+        box.label(text="PLT Autoreload")
+        box.prop(self, 'plt_autoreload_enabled')
 
 
 class NVB_PG_animevent(bpy.types.PropertyGroup):

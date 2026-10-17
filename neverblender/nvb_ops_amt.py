@@ -53,7 +53,9 @@ class NVB_OT_amt_apply_pose(bpy.types.Operator):
             return euls
 
         action = armature.animation_data.action
-        source_fcu = action.fcurves
+        source_fcu = nvb_utils.get_action_fcurves(action, armature)
+        if not source_fcu:
+            return
         dp_list = [('rotation_axis_angle', 4, adjust_axan),
                    ('rotation_quaternion', 4, adjust_quat),
                    ('rotation_euler', 3, adjust_eul),
@@ -125,11 +127,16 @@ class NVB_OT_amt_amt2psb(bpy.types.Operator):
         if anim_mode in ['NLA_STRIPS', 'NLA_TRACKS'] or create_base:
             mdl_base = bpy.data.objects.new(armature.name+'.mdl', None)
             self.collection.objects.link(mdl_base)
+            # Set mdl_base to match armature's full world transform
+            mdl_base.matrix_world = armature.matrix_world.copy()
             psd_bone_root = mdl_base
         if create_root:
             psd_bone_root = bpy.data.objects.new('rootdummy', None)
             psd_bone_root.parent = mdl_base
-            psd_bone_root.location = armature.location
+            # rootdummy is relative to mdl_base, so transforms should be identity
+            psd_bone_root.location = (0.0, 0.0, 0.0)
+            psd_bone_root.rotation_euler = (0.0, 0.0, 0.0)
+            psd_bone_root.scale = (1.0, 1.0, 1.0)
             self.collection.objects.link(psd_bone_root)
         context.evaluated_depsgraph_get().update()
         return mdl_base, psd_bone_root
@@ -158,14 +165,18 @@ class NVB_OT_amt_amt2psb(bpy.types.Operator):
         mesh.update()
         return mesh
 
-    def create_psd_bones(self, amt_bone, psb_parent=None):
+    def create_psd_bones(self, amt_bone, psb_parent=None, armature=None):
         """Creates pseusobone (mesh) objects from armature bones."""
         # Location for newly created mesh = pseudo-bone
-        psb_head = amt_bone.head_local
-        psb_tail = amt_bone.tail_local
+        # Using head_local/tail_local which are in armature local space
+        psb_head = amt_bone.head_local.copy()
+        psb_tail = amt_bone.tail_local.copy()
+        
         if amt_bone.parent:
+            # Make position relative to parent bone's head
             psb_head = psb_head - amt_bone.parent.head_local
             psb_tail = psb_tail - amt_bone.parent.head_local
+            
         # Create pseudo bone object
         if amt_bone.nvb.psd_bone_shape == 'EMT':
             # Pseudo Bone will be an Empty
@@ -185,7 +196,7 @@ class NVB_OT_amt_amt2psb(bpy.types.Operator):
         self.amb_psb_pairs.append([amt_bone.name, psb.name])
         self.mats_edit_bone[amt_bone.name] = amt_bone.matrix_local.copy()
         for c in amt_bone.children:
-            self.create_psd_bones(c, psb)
+            self.create_psd_bones(c, psb, armature)
 
     def get_psd_bones(self, amt_bone, psd_bone_root, strip_trailing=False):
         """Creates a list of pseudobones for this armature."""
@@ -313,7 +324,9 @@ class NVB_OT_amt_amt2psb(bpy.types.Operator):
             psd_action = bpy.data.actions.new(name=psd_bone.name)
             psd_bone.animation_data.action = psd_action
         # All fcurves of the armature
-        source_fcu = amt_action.fcurves
+        source_fcu = nvb_utils.get_action_fcurves(amt_action, amt)
+        if not source_fcu:
+            return
         # Build data paths depending on rotation mode
         if copy_rotmode:
             psd_bone.rotation_mode = amt_bone.rotation_mode
@@ -339,7 +352,7 @@ class NVB_OT_amt_amt2psb(bpy.types.Operator):
                 # values = matrix_to_rotmode(values, psd_bone.rotation_mode)
                 # Create fcurves for pseudo bone
                 psb_fcu = [nvb_utils.get_fcurve(psd_action, psd_dp, i,
-                                                group_name)
+                                                group_name, target=psd_bone)
                            for i in range(dp_dim)]
                 # Add offset to frames (do it here AFTER getting values)
                 if frame_offset != 0:
@@ -354,7 +367,8 @@ class NVB_OT_amt_amt2psb(bpy.types.Operator):
         for ev_idx, ev_name in enumerate(event_names):
             dp = 'nvb.amt_event_list[' + str(ev_idx) + '].fire'
             for action in amt_action_list:
-                fcu = action.fcurves.find(data_path=dp, index=0)
+                fcurves = nvb_utils.get_action_fcurves(action, amt)
+                fcu = fcurves.find(data_path=dp, index=0) if fcurves else None
                 if fcu:
                     event_data.extend([(p.co[0], ev_name)
                                        for p in fcu.keyframe_points])
@@ -389,9 +403,11 @@ class NVB_OT_amt_amt2psb(bpy.types.Operator):
             # Find the last keyed frame, we want to append the new anims
             for _, psd_bone_name in self.amb_psb_pairs:
                 psd_bone = bpy.data.objects[psd_bone_name]
-                if psd_bone.animation_data and psd_bone.animation_data.action and psd_bone.animation_data.action.fcurves:
-                    max_frame = max([fcu.keyframe_points[-1].co[0] for fcu in psd_bone.animation_data.action.fcurves])
-                    last_keyframe = max(last_keyframe, max_frame)
+                if psd_bone.animation_data and psd_bone.animation_data.action:
+                    fcurves = nvb_utils.get_action_fcurves(psd_bone.animation_data.action, psd_bone)
+                    if fcurves and len(fcurves) > 0:
+                        max_frame = max([fcu.keyframe_points[-1].co[0] for fcu in fcurves if len(fcu.keyframe_points) > 0], default=0)
+                        last_keyframe = max(last_keyframe, max_frame)
 
         # insert 70 frames after existing anims end
         if last_keyframe > 0:
@@ -446,6 +462,48 @@ class NVB_OT_amt_amt2psb(bpy.types.Operator):
                         self.copy_keyframes(armature, action,
                                             amt_bone_name, psd_bone_name,
                                             int(math.floor(last_keyframe)))
+
+    def copy_animations_from_animlist(self, mdl_base, armature, action, overwrite=True):
+        """Copy animations using the armature's stored animList metadata.
+        
+        This is used when the armature was created with 'Keyframes' mode,
+        which preserves the animation names, frame ranges, and events.
+        """
+        if not mdl_base:
+            return
+            
+        # Clear existing animation data if overwriting
+        if overwrite:
+            for _, psd_bone_name in self.amb_psb_pairs:
+                psd_bone = bpy.data.objects[psd_bone_name]
+                if psd_bone.animation_data:
+                    psd_bone.animation_data_clear()
+            # Clear the animation list in the mdl base
+            for _ in range(len(mdl_base.nvb.animList)):
+                mdl_base.nvb.animList.remove(0)
+            mdl_base.nvb.animListIdx = 0
+        
+        # Copy each animation from armature's animList to mdl_base
+        for src_anim in armature.nvb.animList:
+            # Create animation entry on mdl_base
+            new_anim = nvb_utils.create_anim_list_item(mdl_base)
+            new_anim.name = src_anim.name
+            new_anim.root_obj = mdl_base
+            new_anim.ttime = src_anim.ttime
+            new_anim.transtime = src_anim.transtime
+            new_anim.mute = src_anim.mute
+            new_anim.frameStart = src_anim.frameStart
+            new_anim.frameEnd = src_anim.frameEnd
+            
+            # Copy events
+            for src_event in src_anim.eventList:
+                new_event = new_anim.eventList.add()
+                new_event.name = src_event.name
+                new_event.frame = src_event.frame
+        
+        # Copy keyframes from the action (keyframes are at their original frame positions)
+        for amt_bone_name, psd_bone_name in self.amb_psb_pairs:
+            self.copy_keyframes(armature, action, amt_bone_name, psd_bone_name, 0)
 
     def create_constraints(self, amt):
         """Apply transform constraint to pseudo bone from armature bone."""
@@ -512,19 +570,29 @@ class NVB_OT_amt_amt2psb(bpy.types.Operator):
             # Create pseudo bones
             for amt_bone in armature.data.bones:
                 if not amt_bone.parent:
-                    self.create_psd_bones(amt_bone, psd_bone_root)
+                    self.create_psd_bones(amt_bone, psd_bone_root, armature)
             context.evaluated_depsgraph_get().update()
         bpy.ops.object.mode_set(mode='OBJECT')
 
         # Transfer animations
         if anim_mode == 'ACTION':
-            anim_list = []
             if armature.animation_data and armature.animation_data.action:
                 action = armature.animation_data.action
-                first_kfp = math.floor(min([fcu.keyframe_points[0].co[0] for fcu in action.fcurves]))
-                last_kfp = math.ceil(max([fcu.keyframe_points[-1].co[0] for fcu in action.fcurves]))
-                anim_list.append(['copied_anim', last_kfp-first_kfp, [action], 7.5])
-                self.copy_animations(mdl_base, armature, anim_list, overwrite_anims)
+                # Check if armature has animation list metadata (from keyframe mode import)
+                if len(armature.nvb.animList) > 0:
+                    # Use the stored animation metadata
+                    self.copy_animations_from_animlist(mdl_base, armature, action, overwrite_anims)
+                else:
+                    # Fallback: create a single generic animation from keyframe range
+                    anim_list = []
+                    fcurves = nvb_utils.get_action_fcurves(action, armature)
+                    if fcurves and len(fcurves) > 0:
+                        fcu_list = [fcu for fcu in fcurves if len(fcu.keyframe_points) > 0]
+                        if fcu_list:
+                            first_kfp = math.floor(min([fcu.keyframe_points[0].co[0] for fcu in fcu_list]))
+                            last_kfp = math.ceil(max([fcu.keyframe_points[-1].co[0] for fcu in fcu_list]))
+                            anim_list.append(['copied_anim', last_kfp-first_kfp, [action], 7.5])
+                            self.copy_animations(mdl_base, armature, anim_list, overwrite_anims)
         elif anim_mode == 'NLA_TRACKS':
             anim_list = []
             for nla_track in armature.animation_data.nla_tracks:
@@ -558,6 +626,253 @@ class NVB_OT_amt_amt2psb(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class NVB_OT_amt_update_anim(bpy.types.Operator):
+    """Update a single animation in-place from armature action."""
+
+    bl_idname = 'nvb.amt_update_anim'
+    bl_label = 'Update Animation'
+    bl_options = {'UNDO'}
+
+    mats_edit_bone = dict()  # armature bone name => edit_bone.matrix
+    amb_psb_pairs = []  # (armature bone name, pseudo bone name) tuples
+
+    @classmethod
+    def poll(cls, context):
+        """Prevent execution if no armature is selected with valid target."""
+        obj = context.object
+        if not obj or obj.type != 'ARMATURE':
+            return False
+        mdl_base = obj.nvb.util_psb_anim_target
+        if not mdl_base:
+            return False
+        # Check if there's an animation selected to update
+        if len(mdl_base.nvb.animList) < 1:
+            return False
+        return True
+
+    def get_psd_bones(self, amt_bone, psd_bone_root, strip_trailing=False):
+        """Creates a list of pseudobones for this armature."""
+        psd_bone_list = [psd_bone_root]
+        nvb_utils.get_children_recursive(psd_bone_root, psd_bone_list)
+
+        if strip_trailing:
+            match_name = [b.name for b in psd_bone_list
+                          if b.name.startswith(amt_bone.name)]
+        else:
+            match_name = [b.name for b in psd_bone_list
+                          if b.name == amt_bone.name]
+        if match_name:
+            psd_bone_name = match_name[0]
+            self.amb_psb_pairs.append([amt_bone.name, psd_bone_name])
+            self.mats_edit_bone[amt_bone.name] = amt_bone.matrix_local.copy()
+        for child in amt_bone.children:
+            self.get_psd_bones(child, psd_bone_root, strip_trailing)
+
+    def delete_keyframes_in_range(self, obj, frame_start, frame_end):
+        """Delete all keyframes within the specified frame range."""
+        if not obj.animation_data or not obj.animation_data.action:
+            return
+        fcurves = nvb_utils.get_action_fcurves(obj.animation_data.action, obj)
+        if not fcurves:
+            return
+        for fcu in fcurves:
+            # Find keyframes to delete (iterate in reverse to avoid index issues)
+            indices_to_delete = []
+            for i, kfp in enumerate(fcu.keyframe_points):
+                if frame_start <= kfp.co[0] <= frame_end:
+                    indices_to_delete.append(i)
+            # Delete in reverse order
+            for i in reversed(indices_to_delete):
+                fcu.keyframe_points.remove(fcu.keyframe_points[i])
+            fcu.update()
+
+    def copy_keyframes(self, amt, amt_action, amb_name, psb_name,
+                       frame_offset=0, copy_rotmode=True):
+        """Copies keyframes from armature bone to pseudo bone."""
+        def insert_kfp(fcu_list, frames, values, dp, dp_dim):
+            for i, fcu in enumerate(fcu_list):
+                vals = [v[i] for v in values]
+                kfp = fcu.keyframe_points
+                kfp_cnt = len(kfp)
+                kfp.add(len(frames))
+                for j, frame in enumerate(frames):
+                    kfp[kfp_cnt+j].co = (frame, vals[j])
+                    kfp[kfp_cnt+j].interpolation = 'LINEAR'
+                fcu.update()
+
+        def convert_loc(amt, posebone, psb, kfvalues, mat_eb):
+            mats = [mathutils.Matrix.Translation(v) for v in kfvalues]
+            mats = [mat_eb @ m @ mat_eb.inverted() for m in mats]
+            return [list(m.to_translation()) for m in mats]
+
+        def convert_axan(amt, posebone, psb, kfvalues, mat_eb):
+            mats = [mathutils.Quaternion(v[1:], v[0]).to_matrix().to_4x4()
+                    for v in kfvalues]
+            mat_eb_adjusted = mat_eb.to_3x3().to_4x4().inverted()
+            mats = [mat_eb @ m @ mat_eb_adjusted for m in mats]
+            quats = [m.to_quaternion() for m in mats]
+            return [[q.angle, *q.axis] for q in quats]
+
+        def convert_quat(amt, posebone, psb, kfvalues, mat_eb):
+            mats = [mathutils.Quaternion(v).to_matrix().to_4x4()
+                    for v in kfvalues]
+            mat_eb_adjusted = mat_eb.to_3x3().to_4x4().inverted()
+            mats = [mat_eb @ m @ mat_eb_adjusted for m in mats]
+            quats = [m.to_quaternion() for m in mats]
+            return [[*q] for q in quats]
+
+        def convert_eul(amt, posebone, psb, kfvalues, mat_eb):
+            mats = [mathutils.Euler(v, posebone.rotation_mode).to_matrix().to_4x4()
+                    for v in kfvalues]
+            mat_eb_adjusted = mat_eb.to_3x3().to_4x4().inverted()
+            mats = [mat_eb @ m @ mat_eb_adjusted for m in mats]
+            euls = [m.to_euler(posebone.rotation_mode) for m in mats]
+            return [[*e] for e in euls]
+
+        def convert_scale(amt, posebone, psb, kfvalues, mat_eb):
+            return kfvalues  # Scale doesn't need conversion
+
+        def kfp_convert_space(amt, posebone, psb, kfvalues, mat_eb):
+            return kfvalues  # No conversion for now
+
+        def get_data_paths(from_rot_mode):
+            dp_list = [('location', 3, convert_loc),
+                       ('scale', 3, convert_scale)]
+            if from_rot_mode == 'AXIS_ANGLE':
+                dp_list.append(('rotation_axis_angle', 4, convert_axan))
+            elif from_rot_mode == 'QUATERNION':
+                dp_list.append(('rotation_quaternion', 4, convert_quat))
+            else:  # EULER
+                dp_list.append(('rotation_euler', 3, convert_eul))
+            return dp_list
+
+        # Get posebone and pseudobone
+        amt_bone = amt.pose.bones[amb_name]
+        psd_bone = bpy.data.objects[psb_name]
+        mat_eb = self.mats_edit_bone[amb_name]
+        
+        # Get animation data, create if needed
+        if not psd_bone.animation_data:
+            psd_bone.animation_data_create()
+        psd_action = psd_bone.animation_data.action
+        if not psd_action:
+            psd_action = bpy.data.actions.new(name=psd_bone.name)
+            psd_bone.animation_data.action = psd_action
+
+        # Copy rotation mode
+        if copy_rotmode:
+            psd_bone.rotation_mode = amt_bone.rotation_mode
+
+        # Get fcurves from armature action
+        fcurves = nvb_utils.get_action_fcurves(amt_action, amt)
+        if not fcurves:
+            return
+
+        dp_list = get_data_paths(amt_bone.rotation_mode)
+        for amt_dp, dp_dim, kfp_convert_space in dp_list:
+            group_name = amb_name
+            # Get source fcurves
+            src_data_path = 'pose.bones["' + amb_name + '"].' + amt_dp
+            src_fcurves = [fcurves.find(data_path=src_data_path, index=i)
+                          for i in range(dp_dim)]
+            if not any(src_fcurves):
+                continue
+            # Get frames and values
+            frames = []
+            for fcu in src_fcurves:
+                if fcu:
+                    frames.extend([p.co[0] for p in fcu.keyframe_points])
+            frames = sorted(list(set(frames)))
+            if not frames:
+                continue
+            values = []
+            for frame in frames:
+                val = []
+                for i, fcu in enumerate(src_fcurves):
+                    if fcu:
+                        val.append(fcu.evaluate(frame))
+                    else:
+                        val.append(0.0)
+                values.append(val)
+            # Convert values
+            values = kfp_convert_space(amt, amt_bone, psd_bone, values, mat_eb)
+            # Create dest fcurves
+            psd_dp = amt_dp
+            psb_fcu = [nvb_utils.get_fcurve(psd_action, psd_dp, i,
+                                            group_name, target=psd_bone)
+                       for i in range(dp_dim)]
+            # Add offset to frames
+            if frame_offset != 0:
+                frames = [f + frame_offset for f in frames]
+            # Add keyframes
+            insert_kfp(psb_fcu, frames, values, psd_dp, dp_dim)
+
+    def execute(self, context):
+        """Update the selected animation in-place."""
+        armature = context.object
+        mdl_base = armature.nvb.util_psb_anim_target
+        
+        if not mdl_base or len(mdl_base.nvb.animList) < 1:
+            self.report({'ERROR'}, 'Invalid target or no animations')
+            return {'CANCELLED'}
+        
+        # Get the selected animation to update
+        anim_idx = mdl_base.nvb.animListIdx
+        target_anim = mdl_base.nvb.animList[anim_idx]
+        anim_name = target_anim.name
+        frame_start = target_anim.frameStart
+        frame_end = target_anim.frameEnd
+        anim_length = frame_end - frame_start
+        
+        # Get action from armature
+        if not armature.animation_data or not armature.animation_data.action:
+            self.report({'ERROR'}, 'Armature has no active action')
+            return {'CANCELLED'}
+        
+        action = armature.animation_data.action
+        
+        # Build bone pairs
+        self.amb_psb_pairs = []
+        self.mats_edit_bone = dict()
+        
+        bpy.ops.object.mode_set(mode='EDIT')
+        for amt_bone in armature.data.bones:
+            if not amt_bone.parent:
+                self.get_psd_bones(amt_bone, mdl_base, True)
+        bpy.ops.object.mode_set(mode='OBJECT')
+        
+        if not self.amb_psb_pairs:
+            self.report({'ERROR'}, 'No matching bones found')
+            return {'CANCELLED'}
+        
+        # Delete existing keyframes in the animation's frame range
+        obj_list = [mdl_base]
+        nvb_utils.get_children_recursive(mdl_base, obj_list)
+        for obj in obj_list:
+            self.delete_keyframes_in_range(obj, frame_start, frame_end)
+            # Also handle materials, shape keys, particle systems
+            mat = obj.active_material
+            if mat:
+                self.delete_keyframes_in_range(mat, frame_start, frame_end)
+            if obj.data and obj.data.shape_keys:
+                self.delete_keyframes_in_range(obj.data.shape_keys, frame_start, frame_end)
+            part_sys = obj.particle_systems.active
+            if part_sys:
+                self.delete_keyframes_in_range(part_sys.settings, frame_start, frame_end)
+        
+        # Copy new keyframes from armature action
+        for amt_bone_name, psd_bone_name in self.amb_psb_pairs:
+            self.copy_keyframes(armature, action,
+                                amt_bone_name, psd_bone_name,
+                                frame_start)  # offset to match animation start
+        
+        self.report({'INFO'}, f'Updated animation "{anim_name}" (frames {frame_start}-{frame_end})')
+        
+        context.evaluated_depsgraph_get().update()
+        context.view_layer.update()
+        return {'FINISHED'}
+
+
 class NVB_OT_amt_psb2amt(bpy.types.Operator):
     """Generate armature from pseudo bones."""
 
@@ -580,8 +895,10 @@ class NVB_OT_amt_psb2amt(bpy.types.Operator):
             # If location is animated the bone cannot be connected
             if obj.animation_data and obj.animation_data.action:
                 action = obj.animation_data.action
-                dp_list = [fcu.data_path for fcu in action.fcurves]
-                return 'location' not in dp_list
+                fcurves = nvb_utils.get_action_fcurves(action, obj)
+                if fcurves:
+                    dp_list = [fcu.data_path for fcu in fcurves]
+                    return 'location' not in dp_list
             return True
         return False
 
@@ -605,22 +922,37 @@ class NVB_OT_amt_psb2amt(bpy.types.Operator):
         return True
 
     def create_bones_rec(self, am, psb, auto_connect=False, strip_name=False, ignore_invisible=False,
-                         amb_parent=None, parent_mat=mathutils.Matrix()):
+                         amb_parent=None, parent_mat=mathutils.Matrix(), use_world_coords=False,
+                         armature_world_inv=None):
         """TODO: doc."""
         def convert_loc(obj, pmat):
             dc_pm = pmat.decompose()
             return mathutils.Matrix.Translation(dc_pm[0]) @ \
                 obj.matrix_parent_inverse @ obj.matrix_basis
         # Calculate head (relative to parent head)
-        psb_mat = convert_loc(psb, parent_mat)
-        bhead = psb_mat.translation
+        if use_world_coords:
+            # Use world matrix directly - more robust for complex hierarchies
+            psb_mat = psb.matrix_world
+            bhead = psb_mat.translation.copy()
+            # Convert from world space to armature local space
+            if armature_world_inv:
+                bhead = armature_world_inv @ bhead
+        else:
+            psb_mat = convert_loc(psb, parent_mat)
+            bhead = psb_mat.translation
         # Calculate tail (relative to head)
         btail = bhead + mathutils.Vector([0.0, 0.2, 0.0])  # For Empties
         valid_children = [c for c in psb.children if (not (c.hide_get() and ignore_invisible) and self.is_psd_bone(c))]
         if valid_children:
             # Multiple children: Calculate centroid
-            clocs = [convert_loc(c, psb_mat).translation
-                     for c in valid_children]
+            if use_world_coords:
+                clocs = [c.matrix_world.translation.copy() for c in valid_children]
+                # Convert from world space to armature local space
+                if armature_world_inv:
+                    clocs = [armature_world_inv @ loc for loc in clocs]
+            else:
+                clocs = [convert_loc(c, psb_mat).translation
+                         for c in valid_children]
             btail = sum(clocs, mathutils.Vector())/len(valid_children)
         else:
             # No children: Generate location from mesh bounding box
@@ -635,9 +967,13 @@ class NVB_OT_amt_psb2amt(bpy.types.Operator):
         if strip_name:
             amb_name = nvb_utils.strip_trailing_numbers(psb.name)
         amb = am.data.edit_bones.new(amb_name)
-        amb.roll = 0
         amb.head = bhead
         amb.tail = btail
+        
+        # Use roll=0 for consistent animation conversion
+        # The rotation conversion functions expect bones with standard orientation
+        amb.roll = 0
+            
         if amb_parent:
             amb.parent = amb_parent
             # Try to connect head with parent tail
@@ -654,13 +990,18 @@ class NVB_OT_amt_psb2amt(bpy.types.Operator):
         # Create children
         for c in valid_children:
             self.create_bones_rec(am, c, auto_connect, strip_name, ignore_invisible,
-                                  amb, psb_mat)
+                                  amb, psb_mat, use_world_coords, armature_world_inv)
 
-    def create_bones(self, context, am, psb_root, auto_connect, strip_name, ignore_invisible=False):
+    def create_bones(self, context, am, psb_root, auto_connect, strip_name, ignore_invisible=False,
+                     use_world_coords=False):
         bpy.ops.object.mode_set(mode='EDIT')
+        # Get armature's world matrix inverse for coordinate conversion
+        armature_world_inv = am.matrix_world.inverted() if use_world_coords else None
         for child in psb_root.children:
             if not (child.hide_get() and ignore_invisible) and self.is_psd_bone(child):
-                self.create_bones_rec(am, child, auto_connect, strip_name, ignore_invisible)
+                self.create_bones_rec(am, child, auto_connect, strip_name, ignore_invisible,
+                                      use_world_coords=use_world_coords,
+                                      armature_world_inv=armature_world_inv)
         am.data.edit_bones.update()
         context.evaluated_depsgraph_get().update()
         bpy.ops.object.mode_set(mode='OBJECT')
@@ -692,18 +1033,21 @@ class NVB_OT_amt_psb2amt(bpy.types.Operator):
             list(map(lambda c: c.update(), fcu))
 
         def convert_loc(am, amb, meb, kfvalues, amb_base):
-            mats = [mathutils.Matrix.Translation(v) for v in kfvalues]
-            mats = [meb.convert_space(pose_bone=None,
-                                     matrix=m,
-                                     from_space='LOCAL',
-                                     to_space='WORLD')
-                    for m in mats]
-            mats = [am.convert_space(pose_bone=amb,
-                                     matrix=m,
-                                     from_space='WORLD',
-                                     to_space='LOCAL')
-                    for m in mats]
-            return [list(m.to_translation()) for m in mats]
+            """Convert location keyframe values from pseudo-bone to armature bone.
+            
+            The bone was created at the pseudo-bone's current world position.
+            When pseudo-bone location equals its current value, bone location should be (0,0,0).
+            """
+            # Get pseudo-bone's current location - this is its "rest" state for the bone
+            rest_loc = mathutils.Vector(meb.location)
+            
+            results = []
+            for v in kfvalues:
+                # Just compute delta from rest - simplest possible approach
+                delta = mathutils.Vector(v) - rest_loc
+                results.append(list(delta))
+            
+            return results
 
         def convert_axan(am, amb, meb, kfvalues, amb_base):
             """Convert rotation values from mesh space to bone space."""
@@ -721,7 +1065,7 @@ class NVB_OT_amt_psb2amt(bpy.types.Operator):
         def convert_quat(am, amb, meb, kfvalues, amb_base):
             """Convert rotation values from mesh space to bone space."""
             # Convert keyframe quats to matrices
-            mat_list = [cmat @ mathutils.Quaternion(v).to_matrix().to_4x4()
+            mat_list = [mathutils.Quaternion(v).to_matrix().to_4x4()
                         for v in kfvalues]
             # Convert from mesh-bone space to armature-bone space
             tm = amb_base.to_4x4()
@@ -753,7 +1097,7 @@ class NVB_OT_amt_psb2amt(bpy.types.Operator):
         # Get posebone and pseudobone (=mesh bone)
         amb = am.pose.bones[amb_name]  # armature bone
         meb = bpy.data.objects[psb_name]  # pseudo bone (a mesh)
-        # Get bone base as matrix from bone
+        # Get bone base as matrix from bone (kept for compatibility, but not used in new conversion)
         amb_base = mathutils.Matrix([amb.x_axis, amb.y_axis, amb.z_axis])
         amb_base.transpose()
         # Copy rotation mode
@@ -767,7 +1111,9 @@ class NVB_OT_amt_psb2amt(bpy.types.Operator):
                        ('rotation_euler', 3, convert_eul),
                        ('location', 3, convert_loc)]
             # All fcurves for this action
-            meb_fcu = meb.animation_data.action.fcurves
+            meb_fcu = nvb_utils.get_action_fcurves(meb.animation_data.action, meb)
+            if not meb_fcu:
+                return
             for dp, dp_dim, dp_convert in dp_list:
                 # List of valid curves for this data path
                 fcu_list = [meb_fcu.find(data_path=dp, index=i)
@@ -795,7 +1141,7 @@ class NVB_OT_amt_psb2amt(bpy.types.Operator):
                     values = dp_convert(am, amb, meb, values, amb_base)
                     # Create fcurves for armature
                     am_fcu = [nvb_utils.get_fcurve(am_action, am_dp, i,
-                                                    amb_name)
+                                                    amb_name, target=am)
                                for i in range(dp_dim)]
                     # Adjust for frame range
                     if frame_range:
@@ -823,7 +1169,8 @@ class NVB_OT_amt_psb2amt(bpy.types.Operator):
                 values = convert_eul(am, amb, meb, values, amb_base)
 
             am_dp = 'pose.bones["' + amb_name + '"].' + dp
-            am_fcu = [nvb_utils.get_fcurve(am_action, am_dp, i, amb_name)
+            am_fcu = [nvb_utils.get_fcurve(am_action, am_dp, i, amb_name,
+                                           target=am)
                       for i in range(dp_dim)]
             # Add keyframes to fcurves
             insert_kfp(am_fcu, frames, values, dp, dp_dim)
@@ -846,7 +1193,8 @@ class NVB_OT_amt_psb2amt(bpy.types.Operator):
         for idx, amt_event in enumerate(amt.nvb.amt_event_list):
             if amt_event.name in event_dict:
                 data_path = 'nvb.amt_event_list[' + str(idx) + '].fire'
-                fcu = nvb_utils.get_fcurve(amt_action, data_path, 0, 'Events')
+                fcu = nvb_utils.get_fcurve(amt_action, data_path, 0, 'Events',
+                                           target=amt)
                 insert_kfp(fcu, event_dict.pop(amt_event.name))
 
     def copy_animations(self, amt, action_list):
@@ -860,6 +1208,37 @@ class NVB_OT_amt_psb2amt(bpy.types.Operator):
                 self.copy_keyframes(amt, amt_action, amb_name,
                                     psb.name, cmat, frame_range)
             self.copy_events(amt, amt_action, event_dict)
+
+    def copy_animation_list(self, mdl_base, amt):
+        """Copy animation list metadata from mdl_base to armature.
+        
+        This copies the animation names, frame ranges, transition times, and events
+        so they are preserved when converting back to pseudo-bones.
+        """
+        # Clear existing animation list on armature
+        amt.nvb.animList.clear()
+        
+        # Copy each animation entry
+        for src_anim in mdl_base.nvb.animList:
+            dst_anim = amt.nvb.animList.add()
+            dst_anim.name = src_anim.name
+            dst_anim.ttime = src_anim.ttime
+            dst_anim.transtime = src_anim.transtime
+            dst_anim.root = src_anim.root
+            # Note: root_obj pointer may not be valid for armature, leave as default
+            dst_anim.mute = src_anim.mute
+            dst_anim.frameStart = src_anim.frameStart
+            dst_anim.frameEnd = src_anim.frameEnd
+            
+            # Copy events for this animation
+            dst_anim.eventList.clear()
+            for src_event in src_anim.eventList:
+                dst_event = dst_anim.eventList.add()
+                dst_event.name = src_event.name
+                dst_event.frame = src_event.frame
+        
+        # Copy the selected index
+        amt.nvb.animListIdx = mdl_base.nvb.animListIdx
 
     def get_psd_bone_actions(self, mdl_base, amt, single_action=True):
         """Get a list of action to hold the animations from the mdl."""
@@ -905,6 +1284,65 @@ class NVB_OT_amt_psb2amt(bpy.types.Operator):
             constraint.target_space = 'WORLD'
             constraint.owner_space = 'WORLD'
 
+    def hook_skinmeshes(self, mdl_base, amt):
+        """Add armature modifier to skinmeshes and parent them to armature.
+
+        Finds all skinmesh objects under the mdl_base and:
+        1. Adds an Armature modifier pointing to the generated armature
+        2. Parents the skinmesh to the armature (keeping transforms)
+
+        The vertex groups on skinmeshes should already match the bone names.
+        """
+        # Get all bone names in the armature
+        bone_names = set(bone.name.lower() for bone in amt.data.bones)
+
+        # Find all skinmeshes under the mdl base
+        all_children = []
+        nvb_utils.get_children_recursive(mdl_base, all_children)
+
+        skinmeshes = []
+        for obj in all_children:
+            if obj.type == 'MESH' and obj.nvb.meshtype == nvb_def.Meshtype.SKIN:
+                skinmeshes.append(obj)
+
+        # Process each skinmesh
+        for skinmesh in skinmeshes:
+            # Check if skinmesh has vertex groups matching armature bones
+            vgroup_names = set(vg.name.lower() for vg in skinmesh.vertex_groups)
+            matching_bones = bone_names.intersection(vgroup_names)
+
+            if not matching_bones:
+                # No matching vertex groups, skip this mesh
+                continue
+
+            # Check if armature modifier already exists
+            has_armature_mod = any(
+                mod.type == 'ARMATURE' and mod.object == amt
+                for mod in skinmesh.modifiers
+            )
+
+            if not has_armature_mod:
+                # Add armature modifier
+                mod = skinmesh.modifiers.new(name='Armature', type='ARMATURE')
+                mod.object = amt
+                mod.use_vertex_groups = True
+                # Move modifier to top of stack
+                while skinmesh.modifiers[0] != mod:
+                    bpy.context.view_layer.objects.active = skinmesh
+                    bpy.ops.object.modifier_move_up(modifier=mod.name)
+
+            # Parent skinmesh to armature (preserving transforms)
+            if skinmesh.parent != amt:
+                # Store world matrix
+                world_matrix = skinmesh.matrix_world.copy()
+                # Set parent
+                skinmesh.parent = amt
+                skinmesh.parent_type = 'OBJECT'
+                # Restore world transform
+                skinmesh.matrix_world = world_matrix
+
+        return len(skinmeshes)
+
     @classmethod
     def poll(self, context):
         """Prevent execution if no root was found."""
@@ -925,7 +1363,10 @@ class NVB_OT_amt_psb2amt(bpy.types.Operator):
             psd_bone_root = context.object
 
         # Create armature
-        bpy.ops.object.add(type='ARMATURE', location=psd_bone_root.location)
+        # Create armature at the world position of the pseudo-bone root
+        # This ensures bone positions in world coords align properly
+        world_loc = psd_bone_root.matrix_world.translation
+        bpy.ops.object.add(type='ARMATURE', location=world_loc)
         amt = context.active_object
         amt.name = mdl_base.name + '.armature'
         # amt_data = bpy.data.armatures.new(mdl_base.name + '.armature')
@@ -937,7 +1378,8 @@ class NVB_OT_amt_psb2amt(bpy.types.Operator):
         self.create_bones(context, amt, psd_bone_root,
                           addon_prefs.util_amt_connect,
                           addon_prefs.util_amt_strip_name,
-                          addon_prefs.util_amt_ignore_invisible)
+                          addon_prefs.util_amt_ignore_invisible,
+                          addon_prefs.util_amt_use_world_coords)
         context.evaluated_depsgraph_get().update()
         self.create_bone_properties(context, amt)  # Second pass necessary
 
@@ -953,13 +1395,23 @@ class NVB_OT_amt_psb2amt(bpy.types.Operator):
             action_list = self.get_psd_bone_actions(mdl_base, amt, False)
             self.copy_animations(amt, action_list)
             amt.nvb.use_amt_events = True
-            # Create mutliple nla-tracks with a single nla-strip. Each track
+            # Create multiple nla-tracks with a single nla-strip. Each track
             # corresponds to an animation from the mdl
-            for anim_name, action, _, _, transtime in action_list:
+            # Mute all tracks except the last one to avoid conflicts
+            first_track = True
+            for anim_name, action, _, frame_range, transtime in action_list:
                 nla_track = amt.animation_data.nla_tracks.new()
                 nla_track.name = anim_name
-                strip = nla_track.strips.new(action.name, 0, action)
+                # Place strip at correct frame position (frame_range[0] is start frame)
+                start_frame = frame_range[0] if frame_range else 0
+                strip = nla_track.strips.new(action.name, int(start_frame), action)
                 strip.blend_in = transtime
+                # Mute all tracks - user can unmute the one they want to preview
+                nla_track.mute = not first_track
+                first_track = False
+            # Set the first track as active
+            if amt.animation_data.nla_tracks:
+                amt.animation_data.nla_tracks.active = amt.animation_data.nla_tracks[0]
         elif anim_mode == 'NLA_STRIPS':
             action_list = self.get_psd_bone_actions(mdl_base, amt, False)
             self.copy_animations(amt, action_list)
@@ -977,11 +1429,17 @@ class NVB_OT_amt_psb2amt(bpy.types.Operator):
             action_list = self.get_psd_bone_actions(mdl_base, amt, True)
             self.copy_animations(amt, action_list)
             # Create a single action holding all keyframes from the mdl
-            # Animation data (start & end frames, etc) is not saved
             if len(action_list) > 0:
                 _, action, _, _, _ = action_list[0]
                 amt.animation_data.action = action
+            # Copy animation list metadata (names, frame ranges, events) to armature
+            self.copy_animation_list(mdl_base, amt)
         bpy.ops.object.mode_set(mode='OBJECT')
+
+        # Hook skinmeshes to the armature if option is enabled
+        if addon_prefs.util_amt_hook_skinmeshes:
+            self.hook_skinmeshes(mdl_base, amt)
+
         del self.generated_bones
         context.view_layer.update()
 

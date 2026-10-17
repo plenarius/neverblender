@@ -415,9 +415,19 @@ class Trimesh(Node):
         blen_mesh.vertices.add(len(self.vertex_coords))
         blen_mesh.vertices.foreach_set('co', unpack_list(self.vertex_coords))
 
-        # Create faces
-        face_vert_ids = [v[0:3] for v in self.facedef]
+        # Validate and clamp face vertex indices
+        vertex_count = len(self.vertex_coords)
+        face_vert_ids = []
+        for v in self.facedef:
+            v0 = min(max(0, v[0]), vertex_count - 1) if vertex_count > 0 else 0
+            v1 = min(max(0, v[1]), vertex_count - 1) if vertex_count > 0 else 0
+            v2 = min(max(0, v[2]), vertex_count - 1) if vertex_count > 0 else 0
+            face_vert_ids.append((v0, v1, v2))
+
         face_cnt = len(face_vert_ids)
+        if face_cnt == 0 or vertex_count == 0:
+            return blen_mesh
+
         # Loops
         blen_mesh.loops.add(face_cnt * 3)
         blen_mesh.loops.foreach_set('vertex_index', unpack_list(face_vert_ids))
@@ -453,7 +463,9 @@ class Trimesh(Node):
             face_uv_indices = unpack_list(face_uv_indices)
             for layer_idx, uv_coords in enumerate(self.texture_coordinates):
                 if uv_coords:
-                    face_uv_coords = [uv_coords[uvi]
+                    uv_count = len(uv_coords)
+                    # Clamp UV indices to valid range
+                    face_uv_coords = [uv_coords[min(uvi, uv_count - 1)] if uv_count > 0 else (0.0, 0.0)
                                       for uvi in face_uv_indices]
                     face_uv_coords = unpack_list(face_uv_coords)
                     uv_layer = blen_mesh.uv_layers.new(do_init=False)
@@ -473,14 +485,15 @@ class Trimesh(Node):
             # Single smooth group with id=0   =>   Non-smooth
             if len(sgr_list_unique) == 1 and sgr_list_unique.pop() == 0:
                 blen_mesh.polygons.foreach_set('use_smooth', [False] * num_blen_polygons)
-                blen_mesh.use_auto_smooth = False
-                blen_mesh.auto_smooth_angle = 4.71
+                # Blender 5.0: use_auto_smooth removed, meshes always use custom normals
+                # Set all edges as sharp for non-smooth meshes
+                for edge in blen_mesh.edges:
+                    edge.use_edge_sharp = True
                 self.tmp_recommend_smoothgroup_setting = 'SEPR'
                 #blen_mesh.nvb.smoothgroup = 'SEPR'
             else:
                 blen_mesh.polygons.foreach_set('use_smooth', [True] * num_blen_polygons)
-                blen_mesh.use_auto_smooth = True
-                blen_mesh.auto_smooth_angle = 1.57
+                # Blender 5.0: use_auto_smooth removed, sharp edges are set per-edge
                 self.create_sharp_edges(blen_mesh, [fd[3] for fd in self.facedef])
                 self.tmp_recommend_smoothgroup_setting = 'AUTO'
                 #blen_mesh.nvb.smoothgroup = 'AUTO'
@@ -489,16 +502,42 @@ class Trimesh(Node):
             # Create normals and use them for shading
             blen_mesh.vertices.foreach_set('normal', unpack_list(self.normals))
 
-            blen_mesh.create_normals_split()
-            per_loop_normals = [no for vidx_list in face_vert_ids
-                                for vidx in vidx_list
-                                for no in self.normals[vidx]]
-            blen_mesh.loops.foreach_set("normal", per_loop_normals)
+            # Blender 5.0: create_normals_split() removed, use normals_split_custom_set directly
+            # Build per-loop normals from per-vertex normals
+            # Guard against invalid vertex indices
+            normals_count = len(self.normals)
+            loop_count = len(blen_mesh.loops)
 
-            clnors = array.array('f', [0.0] * (len(blen_mesh.loops) * 3))
-            blen_mesh.loops.foreach_get("normal", clnors)
-            blen_mesh.normals_split_custom_set(tuple(zip(*(iter(clnors),) * 3)))
-            blen_mesh.use_auto_smooth = True
+            # Only set custom normals if we have valid data
+            if normals_count > 0 and loop_count > 0:
+                import math
+                per_loop_normals = []
+                valid = True
+                for vidx_list in face_vert_ids:
+                    for vidx in vidx_list:
+                        if 0 <= vidx < normals_count:
+                            normal = self.normals[vidx]
+                            # Validate normal is a proper tuple/list of 3 finite floats
+                            if (isinstance(normal, (tuple, list)) and len(normal) == 3 and
+                                all(isinstance(n, (int, float)) and math.isfinite(n) for n in normal)):
+                                per_loop_normals.append(normal)
+                            else:
+                                valid = False
+                                break
+                        else:
+                            # Invalid vertex index - skip custom normals entirely
+                            valid = False
+                            break
+                    if not valid:
+                        break
+
+                # Only call normals_split_custom_set if we have exactly the right count
+                if valid and len(per_loop_normals) == loop_count:
+                    try:
+                        blen_mesh.normals_split_custom_set(per_loop_normals)
+                    except Exception as e:
+                        print(f"NeverBlender: Warning - Could not set custom normals: {e}")
+            # Blender 5.0: custom normals are always used when they exist
 
         if options.geom_mesh_validation:
             blen_mesh.validate(verbose=True, clean_customdata=False)
@@ -614,8 +653,11 @@ class Trimesh(Node):
             per_vertex_data = [[(n, t, b) for i, n, t, b in per_loop_data
                                 if i == vidx]
                                for vidx in range(len(mesh.vertices))]
-            normals = [d[0][0] for d in per_vertex_data]
-            tangents = [[*d[0][1]] + [d[0][2]] for d in per_vertex_data]
+            # Handle orphaned vertices (not part of any face) with default values
+            default_normal = (0.0, 0.0, 1.0)
+            default_tangent = [1.0, 0.0, 0.0, 1.0]
+            normals = [d[0][0] if d else default_normal for d in per_vertex_data]
+            tangents = [[*d[0][1]] + [d[0][2]] if d else default_tangent for d in per_vertex_data]
             # per_vertex_data = {l.vertex_index: (l.normal,
             #                                     l.tangent,
             #                                     l.bitangent_sign)
@@ -697,7 +739,18 @@ class Trimesh(Node):
 
         # Triangulate and split
         do_split = options.geom_smoothing_split and (obj.nvb.meshtype != nvb_def.Meshtype.AABB)
-        do_split_angle = obj.data.auto_smooth_angle if obj.data.use_auto_smooth else 3.14
+        # Blender 5.0: use_auto_smooth/auto_smooth_angle removed
+        # Use a default split angle of 30 degrees (pi/6 radians ~= 0.52)
+        # or check for a Smooth by Angle modifier if present
+        do_split_angle = 3.14  # default: no splitting by angle
+        for mod in obj.modifiers:
+            if mod.type == 'NODES' and mod.node_group and 'Smooth by Angle' in mod.node_group.name:
+                # Try to get the angle from the modifier
+                try:
+                    do_split_angle = mod["Socket_1"]  # Default socket name for angle
+                except (KeyError, TypeError):
+                    do_split_angle = 0.52  # ~30 degrees default
+                break
         mesh_triangulate(me, do_split, do_split_angle)
 
         # Add vertices
@@ -1635,9 +1688,20 @@ class Aabb(Trimesh):
         # Create vertices
         blen_mesh.vertices.add(len(self.vertex_coords))
         blen_mesh.vertices.foreach_set('co', unpack_list(self.vertex_coords))
-        # Create faces
-        face_vert_ids = [v[0:3] for v in self.facedef]
+
+        # Validate and clamp face vertex indices
+        vertex_count = len(self.vertex_coords)
+        face_vert_ids = []
+        for v in self.facedef:
+            v0 = min(max(0, v[0]), vertex_count - 1) if vertex_count > 0 else 0
+            v1 = min(max(0, v[1]), vertex_count - 1) if vertex_count > 0 else 0
+            v2 = min(max(0, v[2]), vertex_count - 1) if vertex_count > 0 else 0
+            face_vert_ids.append((v0, v1, v2))
+
         face_cnt = len(face_vert_ids)
+        if face_cnt == 0 or vertex_count == 0:
+            return blen_mesh
+
         # Loops
         blen_mesh.loops.add(face_cnt * 3)
         blen_mesh.loops.foreach_set('vertex_index', unpack_list(face_vert_ids))

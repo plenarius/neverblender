@@ -33,7 +33,10 @@ class NVB_OT_anim_clone(bpy.types.Operator):
         """Clone the animations keyframes."""
         if obj.animation_data and obj.animation_data.action:
             offset = new_start - frame_start
-            for fcu in obj.animation_data.action.fcurves:
+            fcurves = nvb_utils.get_action_fcurves(obj.animation_data.action, obj)
+            if not fcurves:
+                return
+            for fcu in fcurves:
                 kfp = fcu.keyframe_points
                 vals = [(p.co[0] + offset, p.co[1]) for p in kfp
                         if frame_start <= p.co[0] <= frame_end]
@@ -105,7 +108,10 @@ class NVB_OT_anim_scale(bpy.types.Operator):
         if target.animation_data and target.animation_data.action:
             size_old = animEnd - animStart
             padding = (scaleFactor * size_old) - size_old
-            for fcurve in target.animation_data.action.fcurves:
+            fcurves = nvb_utils.get_action_fcurves(target.animation_data.action, target)
+            if not fcurves:
+                return
+            for fcurve in fcurves:
                 # Move keyframes back to create enough space
                 for p in reversed(fcurve.keyframe_points):
                     if (p.co[0] > animEnd):
@@ -128,7 +134,10 @@ class NVB_OT_anim_scale(bpy.types.Operator):
     def scale_frames_down(self, target, animStart, animEnd, scaleFactor):
         """TODO:DOC."""
         if target.animation_data and target.animation_data.action:
-            for fcurve in target.animation_data.action.fcurves:
+            fcurves = nvb_utils.get_action_fcurves(target.animation_data.action, target)
+            if not fcurves:
+                return
+            for fcurve in fcurves:
                     # Scale the animation down first
                     for p in fcurve.keyframe_points:
                         if (animStart < p.co[0] <= animEnd):
@@ -253,9 +262,12 @@ class NVB_OT_anim_crop(bpy.types.Operator):
             cb = self.cropBack
             # Find out which frames to delete
             action = target.animation_data.action
+            fcurves = nvb_utils.get_action_fcurves(action, target)
+            if not fcurves:
+                return
             framesToDelete = []
             # Find out which ones to delete
-            for fcurve in target.animation_data.action.fcurves:
+            for fcurve in fcurves:
                 for p in fcurve.keyframe_points:
                     if (animStart <= p.co[0] < animStart + cf) or \
                        (animEnd - cb < p.co[0] <= animEnd):
@@ -265,21 +277,24 @@ class NVB_OT_anim_crop(bpy.types.Operator):
             for dp, f in framesToDelete:
                 target.keyframe_delete(dp, frame=f)
             # Move the keyframes to the front to remove gaps
-            for fcurve in action.fcurves:
-                for p in fcurve.keyframe_points:
-                    if (p.co[0] >= animStart):
-                        p.co[0] -= cf
-                        p.handle_left.x -= cf
-                        p.handle_right.x -= cf
-                        if (p.co[0] >= animEnd):
-                            p.co[0] -= cb
-                            p.handle_left.x -= cb
-                            p.handle_right.x -= cb
-                # For compatibility with older blender versions
-                try:
-                    fcurve.update()
-                except AttributeError:
-                    pass
+            # Re-fetch fcurves as they may have changed after deletion
+            fcurves = nvb_utils.get_action_fcurves(action, target)
+            if fcurves:
+                for fcurve in fcurves:
+                    for p in fcurve.keyframe_points:
+                        if (p.co[0] >= animStart):
+                            p.co[0] -= cf
+                            p.handle_left.x -= cf
+                            p.handle_right.x -= cf
+                            if (p.co[0] >= animEnd):
+                                p.co[0] -= cb
+                                p.handle_left.x -= cb
+                                p.handle_right.x -= cb
+                    # For compatibility with older blender versions
+                    try:
+                        fcurve.update()
+                    except AttributeError:
+                        pass
 
     def execute(self, context):
         """TODO:DOC."""
@@ -382,7 +397,10 @@ class NVB_OT_anim_pad(bpy.types.Operator):
     def pad_frames(self, target, frame_start, frame_end):
         """TODO:DOC."""
         if target.animation_data and target.animation_data.action:
-            for fcurve in target.animation_data.action.fcurves:
+            fcurves = nvb_utils.get_action_fcurves(target.animation_data.action, target)
+            if not fcurves:
+                return
+            for fcurve in fcurves:
                 for p in reversed(fcurve.keyframe_points):
                     if p.co[0] > frame_end:
                         p.co[0] += self.pad_back
@@ -532,7 +550,10 @@ class NVB_OT_anim_delete(bpy.types.Operator):
     def delete_frames(self, obj, frame_start, frame_end):
         """Delete the animation's keyframes."""
         if obj.animation_data and obj.animation_data.action:
-            for fcu in obj.animation_data.action.fcurves:
+            fcurves = nvb_utils.get_action_fcurves(obj.animation_data.action, obj)
+            if not fcurves:
+                return
+            for fcu in fcurves:
                 dp = fcu.data_path
                 frames = [p.co[0] for p in fcu.keyframe_points
                           if frame_start <= p.co[0] <= frame_end]
@@ -598,8 +619,11 @@ class NVB_OT_anim_moveback(bpy.types.Operator):
         """Move the animation keyframes."""
         if obj.animation_data and obj.animation_data.action:
             offset = new_start - frame_start
+            fcurves = nvb_utils.get_action_fcurves(obj.animation_data.action, obj)
+            if not fcurves:
+                return
             frames_to_delete = []  # delete later or it may screw up keyframes
-            for fcu in obj.animation_data.action.fcurves:
+            for fcu in fcurves:
                 dp = fcu.data_path
                 kfp = fcu.keyframe_points
                 frames = [p.co[0] for p in kfp
@@ -883,22 +907,28 @@ class NVB_OT_amt_event_delete(bpy.types.Operator):
         """Delete the events fcurve."""
         if obj.animation_data and obj.animation_data.action:
             action = obj.animation_data.action
+            fcurves = nvb_utils.get_action_fcurves(action, obj)
+            if not fcurves:
+                return
             # Remove the current data path for that idx
             data_path = 'nvb.amt_event_list[' + str(event_id) + '].fire'
-            fcu = action.fcurves.find(data_path, 0)
+            fcu = fcurves.find(data_path, 0)
             if fcu:
-                action.fcurves.remove(fcu)
+                fcurves.remove(fcu)
 
     def adjust_event_fcurves(self, obj, event_id_list):
         """All data path ids -1."""
         if obj.animation_data and obj.animation_data.action:
             action = obj.animation_data.action
+            fcurves = nvb_utils.get_action_fcurves(action, obj)
+            if not fcurves:
+                return
             # Remove the current data path for that idx
             dp_prefix = 'nvb.amt_event_list['
             dp_suffix = '].fire'
             for ev_id in event_id_list:
                 data_path = dp_prefix + str(ev_id) + dp_suffix
-                fcu = action.fcurves.find(data_path, 0)
+                fcu = fcurves.find(data_path, 0)
                 if fcu:
                     fcu.data_path = dp_prefix + str(ev_id-1) + dp_suffix
 

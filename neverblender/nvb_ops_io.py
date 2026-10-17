@@ -2,9 +2,11 @@
 
 import os
 import math
+import re
 
 import bpy
 import bpy_extras
+import mathutils
 
 from . import nvb_mdl
 from . import nvb_mtr
@@ -358,8 +360,8 @@ class NVB_OT_mdlimport(bpy.types.Operator, bpy_extras.io_utils.ImportHelper):
         default=True, options={'HIDDEN'})
     ignore_selfillum: bpy.props.BoolProperty(
         name='Ignore Self-Illumination',
-        description='Ignore Self-Illumnination',
-        default=False, options={'HIDDEN'})
+        description='Ignore self-illumination color and texture (texture5) from MTR files',
+        default=False)
 
     def mdl_import(self, context, options):
         def load_file(context, mdl_filepath, options):
@@ -435,6 +437,7 @@ class NVB_OT_mdlimport(bpy.types.Operator, bpy_extras.io_utils.ImportHelper):
         sub.prop(self, 'mat_shader', text='')
         sub.prop(self, 'mat_merge')
         sub.prop(self, 'tex_search')
+        sub.prop(self, 'ignore_selfillum')
 
         # Animation Import Settings
         box = layout.box()
@@ -601,6 +604,568 @@ class NVB_OT_mdl_superimport(bpy.types.Operator, bpy_extras.io_utils.ImportHelpe
         wm.fileselect_add(self)
 
         return {'RUNNING_MODAL'}
+
+
+class NVB_OT_phenotype_batch_export(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
+    """Export model scaled for all selected phenotypes (Elf, Halfling, Dwarf, Gnome, Half-Orc)"""
+
+    bl_idname = 'scene.nvb_phenotype_batch_export'
+    bl_label = 'Export Phenotypes'
+    bl_options = {'PRESET'}
+
+    filename_ext = '.mdl'
+    filter_glob: bpy.props.StringProperty(
+            default='*.mdl',
+            options={'HIDDEN'})
+
+    # Gender conversion scale factors (female human to male human)
+    FEMALE_TO_MALE_SCALE = (1.3, 1.5, 1.26)
+    # Inverse for male to female
+    MALE_TO_FEMALE_SCALE = (1.0/1.3, 1.0/1.5, 1.0/1.26)
+
+    # Female Phenotype scale factors: (prefix, x_scale, y_scale, z_scale, description)
+    FEMALE_PHENOTYPES = [
+        ('pfh0', 1.00, 1.00, 1.00, 'Female Human'),
+        ('pfe0', 0.82, 0.81, 0.90, 'Female Elf'),
+        ('pfa0', 0.65, 0.70, 0.70, 'Female Halfling'),
+        ('pfd0', 1.25, 1.20, 0.99, 'Female Dwarf'),
+        ('pfg0', 0.83, 0.84, 0.84, 'Female Gnome'),
+        ('pfo0', 1.65, 1.48, 1.39, 'Female Half-Orc'),
+    ]
+
+    # Male Phenotype scale factors: (prefix, x_scale, y_scale, z_scale, description)
+    MALE_PHENOTYPES = [
+        ('pmh0', 1.00, 1.00, 1.00, 'Male Human'),
+        ('pme0', 0.80, 0.80, 0.89, 'Male Elf'),
+        ('pma0', 0.60, 0.70, 0.70, 'Male Halfling'),
+        ('pmd0', 1.08, 1.05, 0.89, 'Male Dwarf'),
+        ('pmg0', 0.85, 0.85, 0.81, 'Male Gnome'),
+        ('pmo0', 1.50, 1.50, 1.30, 'Male Half-Orc'),
+    ]
+
+    # Export options (copied from main export)
+    export_animations: bpy.props.BoolProperty(
+            name='Export Animations',
+            description='Export animations',
+            default=True)
+    export_walkmesh: bpy.props.BoolProperty(
+            name='Export Walkmesh',
+            description='Export placeable and door walkmeshes',
+            default=True)
+    export_normals: bpy.props.BoolProperty(
+            name='Export Normals',
+            description='Export normals to MDL',
+            default=False)
+    export_tangents: bpy.props.BoolProperty(
+            name='Export Tangents',
+            description='Export tangent and bitangent vectors to MDL',
+            default=False)
+    export_smoothing_mode: bpy.props.EnumProperty(
+            name='Smoothing',
+            description='Smoothing mode',
+            items=(('NONE', 'None', 'No smoothing', 0),
+                   ('SPLIT', 'Split', 'Split sharp edges', 1),
+                   ('GROUP', 'Groups', 'Smoothgroups', 2)),
+            default='SPLIT')
+    apply_modifiers: bpy.props.BoolProperty(
+            name='Apply Modifiers',
+            description='Apply Modifiers before exporting',
+            default=True)
+    frame_set_zero: bpy.props.BoolProperty(
+            name='Set Frame to 0',
+            description='Set frame to zero before exporting',
+            default=True)
+    strip_trailing: bpy.props.BoolProperty(
+            name='Strip Trailing Numbers',
+            description='Strip trailing numbers from object names',
+            default=True)
+    uv_merge: bpy.props.BoolProperty(
+            name='Merge verts by UV',
+            description='Prevent UV seams from splitting vertices',
+            default=False)
+    uv_mode: bpy.props.EnumProperty(
+            name='UV Mode',
+            description='Determines which UV layers to export',
+            items=(('NONE', 'None', '', 0),
+                   ('ACT', 'Active', 'Export active UV layer', 1),
+                   ('REN', 'Render', 'Export render UV layer', 2),
+                   ('ALL', 'All', 'Export all UV layers', 3)),
+            default='ALL')
+    uv_order: bpy.props.EnumProperty(
+            name='UV Order',
+            description='Determines how UV layers are indexed',
+            items=(('AL0', 'Alphabetical', '', 0),
+                   ('CRT', 'Creation order', '', 1)),
+            default='AL0')
+
+    # Gender selection
+    export_female: bpy.props.BoolProperty(
+            name='Female',
+            description='Export female phenotypes',
+            default=True)
+    export_male: bpy.props.BoolProperty(
+            name='Male',
+            description='Export male phenotypes',
+            default=False)
+
+    # Phenotype selection options
+    export_human: bpy.props.BoolProperty(
+            name='Human',
+            description='Export scaled for Human',
+            default=True)
+    export_elf: bpy.props.BoolProperty(
+            name='Elf',
+            description='Export scaled for Elf',
+            default=True)
+    export_halfling: bpy.props.BoolProperty(
+            name='Halfling',
+            description='Export scaled for Halfling',
+            default=True)
+    export_dwarf: bpy.props.BoolProperty(
+            name='Dwarf',
+            description='Export scaled for Dwarf',
+            default=True)
+    export_gnome: bpy.props.BoolProperty(
+            name='Gnome',
+            description='Export scaled for Gnome',
+            default=True)
+    export_halforc: bpy.props.BoolProperty(
+            name='Half-Orc',
+            description='Export scaled for Half-Orc',
+            default=True)
+    export_original: bpy.props.BoolProperty(
+            name='Original (Human)',
+            description='Also export the original unscaled human model',
+            default=True)
+    
+    # Cloak mode option
+    is_cloak: bpy.props.BoolProperty(
+            name='Cloak Mode',
+            description='Export as cloak: sets supermodel to phenotype prefix and uses Transform Helper scaling method',
+            default=False)
+
+    def get_selected_phenotypes(self):
+        """Return list of phenotypes to export based on checkbox selection.
+        
+        Returns tuples of (prefix, scale_x, scale_y, scale_z, description, is_male)
+        where is_male indicates if this is a male phenotype.
+        """
+        selected = []
+        
+        # Add female phenotypes if selected
+        if self.export_female:
+            if self.export_human:
+                selected.append((*self.FEMALE_PHENOTYPES[0], False))
+            if self.export_elf:
+                selected.append((*self.FEMALE_PHENOTYPES[1], False))
+            if self.export_halfling:
+                selected.append((*self.FEMALE_PHENOTYPES[2], False))
+            if self.export_dwarf:
+                selected.append((*self.FEMALE_PHENOTYPES[3], False))
+            if self.export_gnome:
+                selected.append((*self.FEMALE_PHENOTYPES[4], False))
+            if self.export_halforc:
+                selected.append((*self.FEMALE_PHENOTYPES[5], False))
+        
+        # Add male phenotypes if selected
+        if self.export_male:
+            if self.export_human:
+                selected.append((*self.MALE_PHENOTYPES[0], True))
+            if self.export_elf:
+                selected.append((*self.MALE_PHENOTYPES[1], True))
+            if self.export_halfling:
+                selected.append((*self.MALE_PHENOTYPES[2], True))
+            if self.export_dwarf:
+                selected.append((*self.MALE_PHENOTYPES[3], True))
+            if self.export_gnome:
+                selected.append((*self.MALE_PHENOTYPES[4], True))
+            if self.export_halforc:
+                selected.append((*self.MALE_PHENOTYPES[5], True))
+        
+        return selected
+
+    def is_base_model_male(self, mdl_base):
+        """Detect if the base model is male (pmh0) or female (pfh0).
+        
+        Returns True if male, False if female.
+        Checks the model name for pmh0/pfh0 prefix.
+        """
+        name = mdl_base.name.lower()
+        if name.startswith('pmh0'):
+            return True
+        # Default to female if not clearly male
+        return False
+
+    def replace_phenotype_prefix(self, name, new_prefix):
+        """Replace pfh0/pmh0 prefix with new phenotype prefix in a name."""
+        # Match pfh0 or pmh0 at the start, possibly followed by underscore
+        pattern = r'^p[fm]h0(_)?'
+        if re.match(pattern, name, re.IGNORECASE):
+            return re.sub(pattern, new_prefix + r'\1', name, flags=re.IGNORECASE)
+        # If no pfh0/pmh0 prefix, just prepend
+        return new_prefix + '_' + name
+
+    def scale_object_hierarchy(self, obj, scale_x, scale_y, scale_z):
+        """Scale an object and all its children recursively."""
+        # Store original scale
+        original_scale = obj.scale.copy()
+        # Apply scale to this object
+        obj.scale = (original_scale.x * scale_x,
+                     original_scale.y * scale_y,
+                     original_scale.z * scale_z)
+
+    def apply_scale_to_hierarchy(self, obj, scale_x, scale_y, scale_z, parent_scale=None):
+        """Apply scale to object hierarchy using Transform Helper approach.
+        
+        This modifies vertex data and animations directly, similar to the
+        Transform Helper 'Apply Transform' functionality.
+        """
+        if parent_scale is None:
+            parent_scale = mathutils.Vector((scale_x, scale_y, scale_z))
+        
+        for child in obj.children:
+            # Get current transforms
+            child_loc, child_rot, child_scale = child.matrix_basis.decompose()
+            
+            # Scale the location by parent scale
+            new_loc = mathutils.Vector((
+                child_loc.x * parent_scale.x,
+                child_loc.y * parent_scale.y,
+                child_loc.z * parent_scale.z
+            ))
+            
+            # Update matrix_basis with scaled location, keep rotation
+            child.matrix_basis = mathutils.Matrix.Translation(new_loc) @ \
+                child_rot.to_matrix().to_4x4()
+            
+            # Apply scale to mesh data if it's a mesh
+            if child.type == 'MESH':
+                me = child.data
+                for v in me.vertices:
+                    v.co = mathutils.Vector((
+                        v.co.x * parent_scale.x * child_scale.x,
+                        v.co.y * parent_scale.y * child_scale.y,
+                        v.co.z * parent_scale.z * child_scale.z
+                    ))
+                me.update()
+            
+            # Apply scale to animations
+            self.apply_scale_to_animations(child, parent_scale)
+            
+            # Continue with children, combining scales
+            combined_scale = mathutils.Vector((
+                parent_scale.x * child_scale.x,
+                parent_scale.y * child_scale.y,
+                parent_scale.z * child_scale.z
+            ))
+            self.apply_scale_to_hierarchy(child, scale_x, scale_y, scale_z, combined_scale)
+
+    def apply_scale_to_animations(self, obj, scale_vec):
+        """Apply scale to animation keyframes."""
+        if not (obj.animation_data and obj.animation_data.action):
+            return
+        
+        action = obj.animation_data.action
+        all_fcu = nvb_utils.get_action_fcurves(action, obj)
+        if not all_fcu:
+            return
+        
+        # Handle location keyframes
+        loc_fcu = [all_fcu.find(data_path='location', index=i) for i in range(3)]
+        if loc_fcu.count(None) < 1:
+            frames = list(set().union(
+                *[[k.co[0] for k in loc_fcu[i].keyframe_points] for i in range(3)]))
+            frames.sort()
+            
+            for frame in frames:
+                values = [loc_fcu[i].evaluate(frame) for i in range(3)]
+                scaled_values = [
+                    values[0] * scale_vec.x,
+                    values[1] * scale_vec.y,
+                    values[2] * scale_vec.z
+                ]
+                # Update keyframe values
+                for i in range(3):
+                    for kfp in loc_fcu[i].keyframe_points:
+                        if abs(kfp.co[0] - frame) < 0.001:
+                            kfp.co[1] = scaled_values[i]
+                            break
+            
+            for fcu in loc_fcu:
+                fcu.update()
+
+    def get_walkmeshtype(self, mdl_base):
+        """Get walkmesh type based on classification."""
+        if mdl_base.nvb.classification == nvb_def.Classification.DOOR:
+            return nvb_def.Walkmeshtype.DWK
+        elif mdl_base.nvb.classification == nvb_def.Classification.TILE:
+            return nvb_def.Walkmeshtype.WOK
+        else:
+            return nvb_def.Walkmeshtype.PWK
+
+    def get_filepath(self, old_path, new_name, new_ext):
+        """Build filepath with new name and extension."""
+        old_dir = os.path.dirname(old_path)
+        new_name = new_name + new_ext
+        return os.path.join(old_dir, new_name)
+
+    def export_single_mdl(self, context, mdl_base, filepath, options):
+        """Export a single MDL file."""
+        options.mdlname = mdl_base.name
+        options.filepath = filepath
+        options.classification = mdl_base.nvb.classification
+
+        # Export MDL
+        ascii_lines = []
+        nvb_mdl.Mdl.generate_ascii(mdl_base, ascii_lines, options)
+        with open(os.fsencode(filepath), 'w', newline='\r\n') as f:
+            f.write('\n'.join(ascii_lines))
+
+        # Export walkmesh
+        if options.geom_walkmesh:
+            wkm_type = self.get_walkmeshtype(mdl_base)
+            wkm_ext = '.' + wkm_type
+            ascii_lines = []
+            nvb_mdl.Mdl.generate_ascii_wkm(mdl_base, ascii_lines,
+                                           wkm_type, options)
+            if ascii_lines:
+                wkm_name = os.path.splitext(os.path.basename(filepath))[0]
+                wkm_path = self.get_filepath(filepath, wkm_name, wkm_ext)
+                with open(os.fsencode(wkm_path), 'w', newline='\r\n') as f:
+                    f.write('\n'.join(ascii_lines))
+
+    def execute(self, context):
+        """Export model for all selected phenotypes."""
+        addon_prefs = context.preferences.addons[__package__].preferences
+        
+        # Get MDL base
+        mdl_base = nvb_utils.get_mdl_base(context.object,
+                                          context.scene.collection,
+                                          context.scene)
+        if not mdl_base:
+            self.report({'ERROR'}, 'No MDL base found')
+            return {'CANCELLED'}
+
+
+        # Set to object mode
+        if bpy.ops.object.mode_set.poll():
+            bpy.ops.object.mode_set(mode='OBJECT')
+        
+        # Set frame to zero if specified
+        if self.frame_set_zero:
+            context.scene.frame_current = 0
+            context.evaluated_depsgraph_get().update()
+
+        # Build export options
+        options = nvb_def.ExportOptions()
+        options.scene = context.scene
+        options.depsgraph = context.evaluated_depsgraph_get()
+        options.mat_mtr_generate = addon_prefs.export_mat_mtr_generate
+        options.mat_mtr_ref = addon_prefs.export_mat_mtr_ref
+        options.mat_diffuse_ref = addon_prefs.export_mat_diffuse_ref
+        options.geom_import = True
+        options.geom_normals = self.export_normals
+        options.geom_tangents = self.export_tangents and self.export_normals
+        options.geom_smoothing_split = (self.export_smoothing_mode == 'SPLIT')
+        options.geom_smoothing_group = (self.export_smoothing_mode == 'GROUP')
+        options.geom_smoothing_group_binary = addon_prefs.export_smoothgroups_binary
+        options.geom_smoothing_group_distinct = addon_prefs.export_smoothgroups_distinct_verts
+        options.geom_walkmesh = self.export_walkmesh
+        options.anim_export = self.export_animations
+        options.export_metadata = addon_prefs.export_metadata
+        options.export_wirecolor = addon_prefs.export_wirecolor
+        options.uv_merge = self.uv_merge
+        options.uv_level = self.uv_mode
+        options.uv_order = self.uv_order
+        options.apply_modifiers = self.apply_modifiers
+        options.strip_trailing = self.strip_trailing
+        options.batch_mode = 'OFF'
+
+        base_dir = os.path.dirname(self.filepath)
+        base_filename = os.path.splitext(os.path.basename(self.filepath))[0]
+
+        exported_count = 0
+
+        # Detect if base model is male or female
+        base_is_male = self.is_base_model_male(mdl_base)
+
+        # Export original (unscaled) if requested
+        if self.export_original:
+            self.export_single_mdl(context, mdl_base, self.filepath, options)
+            exported_count += 1
+
+        # Export each selected phenotype
+        for prefix, scale_x, scale_y, scale_z, desc, target_is_male in self.get_selected_phenotypes():
+            # Generate new filename
+            new_filename = self.replace_phenotype_prefix(base_filename, prefix)
+            new_filepath = os.path.join(base_dir, new_filename + '.mdl')
+            new_mdl_name = self.replace_phenotype_prefix(mdl_base.name, prefix)
+
+            # Calculate final scale, including gender conversion if needed
+            final_scale_x = scale_x
+            final_scale_y = scale_y
+            final_scale_z = scale_z
+            
+            # Apply gender conversion if exporting to opposite gender
+            if base_is_male and not target_is_male:
+                # Male base -> Female target: apply male-to-female conversion first
+                final_scale_x *= self.MALE_TO_FEMALE_SCALE[0]
+                final_scale_y *= self.MALE_TO_FEMALE_SCALE[1]
+                final_scale_z *= self.MALE_TO_FEMALE_SCALE[2]
+            elif not base_is_male and target_is_male:
+                # Female base -> Male target: apply female-to-male conversion first
+                final_scale_x *= self.FEMALE_TO_MALE_SCALE[0]
+                final_scale_y *= self.FEMALE_TO_MALE_SCALE[1]
+                final_scale_z *= self.FEMALE_TO_MALE_SCALE[2]
+
+            # Duplicate the entire model hierarchy
+            bpy.ops.object.select_all(action='DESELECT')
+            
+            # Select mdl_base and all descendants
+            mdl_base.select_set(True)
+            for obj in mdl_base.children_recursive:
+                obj.select_set(True)
+            
+            context.view_layer.objects.active = mdl_base
+            
+            # Duplicate (linked=False means geometry is copied, but materials stay linked)
+            bpy.ops.object.duplicate(linked=False)
+            
+            # Get the duplicated base (it's now the active object)
+            dup_base = context.active_object
+            
+            # Get all duplicated objects
+            dup_objects = list(context.selected_objects)
+            
+            # Rename the duplicate base
+            dup_base.name = new_mdl_name
+            
+            # Apply scaling based on mode
+            if self.is_cloak:
+                # Cloak mode: use Transform Helper approach and set supermodel
+                # Supermodel is just the phenotype prefix (e.g., "pfe0", "pfa0")
+                dup_base.nvb.supermodel = prefix
+                self.apply_scale_to_hierarchy(dup_base, final_scale_x, final_scale_y, final_scale_z)
+            else:
+                # Standard mode: apply scale transform normally
+                dup_base.scale = (final_scale_x, final_scale_y, final_scale_z)
+                bpy.ops.object.select_all(action='DESELECT')
+                for obj in dup_objects:
+                    obj.select_set(True)
+                context.view_layer.objects.active = dup_base
+                bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
+
+            # Update depsgraph after modifications
+            context.evaluated_depsgraph_get().update()
+            options.depsgraph = context.evaluated_depsgraph_get()
+            
+            # Export the duplicate
+            self.export_single_mdl(context, dup_base, new_filepath, options)
+            exported_count += 1
+            
+            # Delete the duplicates
+            bpy.ops.object.select_all(action='DESELECT')
+            for obj in dup_objects:
+                obj.select_set(True)
+            bpy.ops.object.delete()
+            
+            # Clear selection
+            bpy.ops.object.select_all(action='DESELECT')
+
+        export_type = 'cloak phenotype' if self.is_cloak else 'phenotype'
+        self.report({'INFO'}, f'Exported {exported_count} {export_type} model(s)')
+        return {'FINISHED'}
+
+    def invoke(self, context, event):
+        wm = context.window_manager
+        wm.fileselect_add(self)
+        # Generate a file name from active object
+        mdl_base = nvb_utils.get_mdl_base(context.object,
+                                          context.scene.collection,
+                                          context.scene)
+        if mdl_base:
+            generated_name = nvb_utils.generate_node_name(mdl_base, True)
+            self.filepath = generated_name + '.mdl'
+        else:
+            self.filepath = 'untitled.mdl'
+        return {'RUNNING_MODAL'}
+
+    def draw(self, context):
+        """Draw export options."""
+        layout = self.layout
+
+        # Cloak Mode Option
+        box = layout.box()
+        box.label(text='Export Mode:', icon='MODIFIER')
+        box.prop(self, 'is_cloak')
+        if self.is_cloak:
+            col = box.column(align=True)
+            col.scale_y = 0.8
+            col.label(text='Cloak mode will:', icon='INFO')
+            col.label(text='  - Set supermodel to phenotype prefix')
+            col.label(text='  - Use Transform Helper scaling method')
+
+        # Gender Selection
+        box = layout.box()
+        box.label(text='Gender:', icon='COMMUNITY')
+        row = box.row(align=True)
+        row.prop(self, 'export_female')
+        row.prop(self, 'export_male')
+
+        # Phenotype Selection
+        box = layout.box()
+        box.label(text='Phenotypes to Export:', icon='GROUP_VERTEX')
+        box.prop(self, 'export_original')
+        box.separator()
+        box.prop(self, 'export_human')
+        box.prop(self, 'export_elf')
+        box.prop(self, 'export_halfling')
+        box.prop(self, 'export_dwarf')
+        box.prop(self, 'export_gnome')
+        box.prop(self, 'export_halforc')
+
+        # Scale Reference
+        box = layout.box()
+        box.label(text='Scale Factors:', icon='INFO')
+        
+        if self.export_female:
+            col = box.column(align=True)
+            col.scale_y = 0.8
+            col.label(text='Female:', icon='DOT')
+            col.label(text='  Elf: 0.82 x 0.81 x 0.90')
+            col.label(text='  Halfling: 0.65 x 0.70 x 0.70')
+            col.label(text='  Dwarf: 1.25 x 1.20 x 0.99')
+            col.label(text='  Gnome: 0.83 x 0.84 x 0.84')
+            col.label(text='  Half-Orc: 1.65 x 1.48 x 1.39')
+        
+        if self.export_male:
+            col = box.column(align=True)
+            col.scale_y = 0.8
+            col.label(text='Male:', icon='DOT')
+            col.label(text='  Elf: 0.80 x 0.80 x 0.89')
+            col.label(text='  Halfling: 0.60 x 0.70 x 0.70')
+            col.label(text='  Dwarf: 1.08 x 1.05 x 0.89')
+            col.label(text='  Gnome: 0.85 x 0.85 x 0.81')
+            col.label(text='  Half-Orc: 1.50 x 1.50 x 1.30')
+
+        # Export Options
+        box = layout.box()
+        box.label(text='Export Options:', icon='EXPORT')
+        box.prop(self, 'export_animations')
+        box.prop(self, 'export_walkmesh')
+        box.prop(self, 'export_normals')
+        box.prop(self, 'export_tangents')
+        box.prop(self, 'export_smoothing_mode')
+        box.prop(self, 'apply_modifiers')
+        box.prop(self, 'frame_set_zero')
+        box.prop(self, 'strip_trailing')
+
+        # UV Options
+        box = layout.box()
+        box.label(text='UV Options:', icon='UV')
+        box.prop(self, 'uv_merge')
+        box.prop(self, 'uv_mode')
+        box.prop(self, 'uv_order')
 
 
 class NVB_OT_setexport(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):

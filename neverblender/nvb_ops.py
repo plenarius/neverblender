@@ -196,7 +196,7 @@ class NVB_OT_util_minimap(bpy.types.Operator):
             scene.world = bpy.data.worlds['minimap_world']
         else:
             scene.world = bpy.data.worlds.new('minimap_world')
-            scene.world.use_nodes = False
+            # Note: use_nodes was removed in Blender 4.0, worlds always have node trees
             scene.world.color = (0.0, 0.0, 0.0)
         
         if self.render_dir:
@@ -270,7 +270,9 @@ class NVB_OT_util_transform(bpy.types.Operator):
         if not (obj.animation_data and obj.animation_data.action):
             return
         action = obj.animation_data.action
-        source_fcu = action.fcurves
+        source_fcu = nvb_utils.get_action_fcurves(action, obj)
+        if not source_fcu:
+            return
         dp_list = [('rotation_axis_angle', 4, adjust_axan),
                    ('rotation_quaternion', 4, adjust_quat),
                    ('rotation_euler', 3, adjust_eul),
@@ -334,7 +336,9 @@ class NVB_OT_util_transform(bpy.types.Operator):
         if not (obj.animation_data and obj.animation_data.action):
             return
         action = obj.animation_data.action
-        all_fcu = action.fcurves
+        all_fcu = nvb_utils.get_action_fcurves(action, obj)
+        if not all_fcu:
+            return
         dp_list = [('rotation_axis_angle', 4, adjust_axan),
                    ('rotation_quaternion', 4, adjust_quat),
                    ('rotation_euler', 3, adjust_eul),
@@ -400,7 +404,9 @@ class NVB_OT_util_transform(bpy.types.Operator):
                    ('rotation_quaternion', 4, adjust_quat),
                    ('rotation_euler', 3, adjust_eul),
                    ('location', 3, adjust_loc)]
-        all_fcu = action.fcurves
+        all_fcu = nvb_utils.get_action_fcurves(action, obj)
+        if not all_fcu:
+            return
         for dp, dp_dim, adjust_func in dp_list:
             fcu = [all_fcu.find(data_path=dp, index=i)
                    for i in range(dp_dim)]
@@ -419,7 +425,11 @@ class NVB_OT_util_transform(bpy.types.Operator):
                     data = [d for z in zip(frames, single_vals) for d in z]
                     fcu[i].keyframe_points.foreach_set('co', data)
                 list(map(lambda c: c.update(), fcu))
-        action.fcurves.update()
+        # Update all fcurves - use the collection directly since we have it
+        try:
+            all_fcu.update()
+        except AttributeError:
+            pass  # Some collections might not have update()
 
     def adjust_objects(self, obj, scl_mat, trn_mat):
         for c in obj.children:

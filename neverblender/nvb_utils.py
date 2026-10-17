@@ -13,6 +13,211 @@ import bpy_extras.image_utils
 from . import nvb_def
 
 
+# Blender 5.0+ uses slotted actions with channelbags instead of action.fcurves
+BLENDER_50_PLUS = bpy.app.version >= (5, 0, 0)
+
+
+def get_id_type(target):
+    """Get the id_type string for a given target object.
+    
+    Used for Blender 5.0+ slotted actions.
+    
+    Args:
+        target: A Blender data block (Object, Key, ParticleSettings, etc.)
+        
+    Returns:
+        String id_type for use with action.slots.new()
+    """
+    # Map common types to their id_type strings
+    if isinstance(target, bpy.types.Object):
+        return 'OBJECT'
+    elif isinstance(target, bpy.types.Key):
+        return 'KEY'
+    elif isinstance(target, bpy.types.ParticleSettings):
+        return 'PARTICLE'
+    elif isinstance(target, bpy.types.Material):
+        return 'MATERIAL'
+    elif isinstance(target, bpy.types.Light):
+        return 'LIGHT'
+    elif isinstance(target, bpy.types.Camera):
+        return 'CAMERA'
+    elif isinstance(target, bpy.types.World):
+        return 'WORLD'
+    elif isinstance(target, bpy.types.NodeTree):
+        return 'NODETREE'
+    elif isinstance(target, bpy.types.Mesh):
+        return 'MESH'
+    elif isinstance(target, bpy.types.Armature):
+        return 'ARMATURE'
+    elif isinstance(target, bpy.types.Curve):
+        return 'CURVE'
+    elif isinstance(target, bpy.types.Lattice):
+        return 'LATTICE'
+    elif isinstance(target, bpy.types.Scene):
+        return 'SCENE'
+    else:
+        # Fallback - try to get it from bl_rna
+        if hasattr(target, 'bl_rna') and hasattr(target.bl_rna, 'identifier'):
+            return target.bl_rna.identifier.upper()
+        return 'OBJECT'
+
+
+def get_action_fcurves(action, target=None):
+    """Get fcurves from an action, compatible with Blender 4.x and 5.0+.
+
+    In Blender 5.0+, fcurves are accessed through channelbags in slots.
+    In earlier versions, fcurves are directly on the action.
+
+    Args:
+        action: The action to get fcurves from
+        target: The target object (needed for 5.0+ to find the right slot)
+
+    Returns:
+        An fcurves collection or None if not available
+    """
+    if not action:
+        return None
+
+    if BLENDER_50_PLUS:
+        # Blender 5.0+: Use slotted actions
+        slot = None
+        
+        # Strategy 1: Try to find a slot in THIS action that matches the target
+        # This is important for NLA strip actions which may not be the active action
+        if target and action.slots:
+            target_id_type = get_id_type(target)
+            for action_slot in action.slots:
+                # Check if slot's id_type matches the target type
+                if hasattr(action_slot, 'id_type') and action_slot.id_type == target_id_type:
+                    slot = action_slot
+                    break
+                # Also try matching by identifier/name containing target info
+                if hasattr(action_slot, 'identifier'):
+                    # Slots often have identifiers like "OBObject" for objects
+                    if target_id_type in action_slot.identifier.upper():
+                        slot = action_slot
+                        break
+        
+        # Strategy 2: Use the target's current action_slot if it belongs to this action
+        if not slot and target and target.animation_data:
+            current_slot = target.animation_data.action_slot
+            if current_slot and current_slot in action.slots.values():
+                slot = current_slot
+        
+        # Strategy 3: Fall back to first slot if available
+        if not slot and action.slots:
+            slot = action.slots[0] if len(action.slots) > 0 else None
+        
+        if slot:
+            # Find the channelbag for this slot
+            for layer in action.layers:
+                for strip in layer.strips:
+                    if hasattr(strip, 'channelbags'):
+                        for channelbag in strip.channelbags:
+                            if channelbag.slot == slot:
+                                return channelbag.fcurves
+        return None
+    else:
+        # Blender 4.x: Direct access
+        return action.fcurves
+
+
+def get_action_groups(action, target=None):
+    """Get action groups from an action, compatible with Blender 4.x and 5.0+.
+
+    In Blender 5.0+, groups are accessed through channelbags in slots.
+    In earlier versions, groups are directly on the action.
+
+    Args:
+        action: The action to get groups from
+        target: The target object (needed for 5.0+ to find the right slot)
+
+    Returns:
+        A groups collection or None if not available
+    """
+    if not action:
+        return None
+
+    if BLENDER_50_PLUS:
+        # Blender 5.0+: Use slotted actions
+        slot = None
+        
+        # Strategy 1: Try to find a slot in THIS action that matches the target
+        if target and action.slots:
+            target_id_type = get_id_type(target)
+            for action_slot in action.slots:
+                if hasattr(action_slot, 'id_type') and action_slot.id_type == target_id_type:
+                    slot = action_slot
+                    break
+                if hasattr(action_slot, 'identifier'):
+                    if target_id_type in action_slot.identifier.upper():
+                        slot = action_slot
+                        break
+        
+        # Strategy 2: Use the target's current action_slot if it belongs to this action
+        if not slot and target and target.animation_data:
+            current_slot = target.animation_data.action_slot
+            if current_slot and current_slot in action.slots.values():
+                slot = current_slot
+        
+        # Strategy 3: Fall back to first slot
+        if not slot and action.slots:
+            slot = action.slots[0] if len(action.slots) > 0 else None
+        
+        if slot:
+            for layer in action.layers:
+                for strip in layer.strips:
+                    if hasattr(strip, 'channelbags'):
+                        for channelbag in strip.channelbags:
+                            if channelbag.slot == slot:
+                                return channelbag.groups
+        return None
+    else:
+        # Blender 4.x: Direct access
+        return action.groups
+
+
+def ensure_action_channelbag(action, target):
+    """Ensure an action has a channelbag for the target, creating if needed.
+
+    For Blender 5.0+, this creates the necessary slot, layer, strip, and channelbag
+    structure if they don't exist.
+
+    Args:
+        action: The action to ensure has a channelbag
+        target: The target object that will use the action
+
+    Returns:
+        The channelbag's fcurves collection (5.0+) or action.fcurves (4.x)
+    """
+    if not action:
+        return None
+
+    if BLENDER_50_PLUS:
+        from bpy_extras import anim_utils
+
+        # Get or create slot for target
+        slot = None
+        if target and target.animation_data:
+            slot = target.animation_data.action_slot
+            if not slot:
+                # Create a new slot for this target
+                id_type = get_id_type(target)
+                slot = action.slots.new(id_type=id_type, name=target.name)
+                target.animation_data.action_slot = slot
+        elif not action.slots:
+            # Create default slot for OBJECT type
+            slot = action.slots.new(id_type='OBJECT', name='Slot')
+
+        if slot:
+            # Use the helper function from bpy_extras
+            channelbag = anim_utils.action_ensure_channelbag_for_slot(action, slot)
+            return channelbag.fcurves
+        return None
+    else:
+        return action.fcurves
+
+
 class NodeResolver():
     """Solves naming conflicts.
 
@@ -172,22 +377,76 @@ def get_active_collection(context):
     return collection
 
 
-def get_fcurve(action, data_path, index=0, group_name=None):
-    """Get the fcurve with specified properties or create one."""
-    fcu = action.fcurves.find(data_path=data_path, index=index)
-    if not fcu:  # Create new Curve
-        fcu = action.fcurves.new(data_path=data_path, index=index)
-        if group_name:  # Add curve to group
-            if group_name in action.groups:
-                group = action.groups[group_name]
-            else:
-                group = action.groups.new(group_name)
-            fcu.group = group
-    return fcu
+def get_fcurve(action, data_path, index=0, group_name=None, target=None):
+    """Get the fcurve with specified properties or create one.
+
+    Compatible with both Blender 4.x and 5.0+ (slotted actions).
+
+    Args:
+        action: The action to get/create the fcurve in
+        data_path: The data path for the fcurve
+        index: The array index for the fcurve (default 0)
+        group_name: Optional group name to assign the fcurve to
+        target: The target object (REQUIRED for Blender 5.0+ slotted actions)
+
+    Returns:
+        The fcurve
+    """
+    if BLENDER_50_PLUS:
+        from bpy_extras import anim_utils
+
+        # Get or create slot for target
+        slot = None
+        if target:
+            # Ensure target has animation_data
+            if not target.animation_data:
+                target.animation_data_create()
+            if target.animation_data.action != action:
+                target.animation_data.action = action
+            slot = target.animation_data.action_slot
+            if not slot:
+                # Blender 5.0 requires id_type parameter
+                id_type = get_id_type(target)
+                slot = action.slots.new(id_type=id_type, name=target.name)
+                target.animation_data.action_slot = slot
+        elif action.slots and len(action.slots) > 0:
+            slot = action.slots[0]
+        else:
+            # Fallback: create slot for OBJECT type (most common)
+            slot = action.slots.new(id_type='OBJECT', name='Slot')
+
+        if slot:
+            # Get or create channelbag
+            channelbag = anim_utils.action_ensure_channelbag_for_slot(action, slot)
+            # Try to find existing fcurve
+            fcu = channelbag.fcurves.find(data_path=data_path, index=index)
+            if not fcu:
+                # Create new fcurve with optional group
+                if group_name:
+                    fcu = channelbag.fcurves.new(data_path=data_path, index=index, group_name=group_name)
+                else:
+                    fcu = channelbag.fcurves.new(data_path=data_path, index=index)
+            return fcu
+        return None
+    else:
+        # Blender 4.x: Direct access on action
+        fcu = action.fcurves.find(data_path=data_path, index=index)
+        if not fcu:  # Create new Curve
+            fcu = action.fcurves.new(data_path=data_path, index=index)
+            if group_name:  # Add curve to group
+                if group_name in action.groups:
+                    group = action.groups[group_name]
+                else:
+                    group = action.groups.new(group_name)
+                fcu.group = group
+        return fcu
 
 
 def get_action(target, action_name):
-    """Get the active action or create one."""
+    """Get the active action or create one.
+    
+    For Blender 5.0+, this also ensures a proper slot is created and bound.
+    """
     # Get animation data, create if needed
     anim_data = target.animation_data
     if not anim_data:
@@ -198,6 +457,15 @@ def get_action(target, action_name):
         action = bpy.data.actions.new(name=action_name)
         # action.use_fake_user = True
         anim_data.action = action
+    
+    # For Blender 5.0+, ensure slot is created and bound
+    if BLENDER_50_PLUS:
+        if not anim_data.action_slot:
+            # Create a slot for this target in the action
+            id_type = get_id_type(target)
+            slot = action.slots.new(id_type=id_type, name=target.name)
+            anim_data.action_slot = slot
+    
     return action
 
 
@@ -318,9 +586,11 @@ def get_last_keyframe(root_obj):
         frame = nvb_def.anim_globstart
         if target:
             if target.animation_data and target.animation_data.action:
-                for fcu in target.animation_data.action.fcurves:
-                    frame = max(max([p.co[0] for p in fcu.keyframe_points],
-                                    default=0), frame)
+                fcurves = get_action_fcurves(target.animation_data.action, target)
+                if fcurves:
+                    for fcu in fcurves:
+                        frame = max(max([p.co[0] for p in fcu.keyframe_points],
+                                        default=0), frame)
             return frame
     obj_list = [root_obj]
     get_children_recursive(root_obj, obj_list)
@@ -345,11 +615,13 @@ def get_frame_interval(obj):
     for o in obj_list:
         if o.animation_data and o.animation_data.action:
             action = o.animation_data.action
-            for fcu in action.fcurves:
-                max_frame = max(max([p.co[0] for p in fcu.keyframe_points],
-                                    default=0), max_frame)
-                min_frame = min(min([p.co[0] for p in fcu.keyframe_points],
-                                    default=0), min_frame)
+            fcurves = get_action_fcurves(action, o)
+            if fcurves:
+                for fcu in fcurves:
+                    max_frame = max(max([p.co[0] for p in fcu.keyframe_points],
+                                        default=0), max_frame)
+                    min_frame = min(min([p.co[0] for p in fcu.keyframe_points],
+                                        default=0), min_frame)
     return (min_frame, max_frame)
 
 
@@ -476,13 +748,18 @@ def amt_event_list_item_create(amt, event_name):
     # Add empty fcurves (to make sure they are conveniently grouped)
     anim_data = amt.animation_data
     if not anim_data:
-        anim_data = amt.animation_data.create()
+        anim_data = amt.animation_data_create()
     action = anim_data.action
     if not action:
         action = bpy.data.actions.new(amt.name)
+        anim_data.action = action
     data_path = 'nvb.amt_event_list[' + str(amt.nvb.amt_event_list_idx) + '].fire'
-    fcu = get_fcurve(action, data_path, 0, 'Events')
-    fcu.group = action.groups['Events']  # force group
+    fcu = get_fcurve(action, data_path, 0, 'Events', target=amt)
+    # Force group assignment (only needed for Blender 4.x)
+    if not BLENDER_50_PLUS:
+        groups = get_action_groups(action, amt)
+        if groups and 'Events' in groups:
+            fcu.group = groups['Events']
 
 
 def amt_event_list_init(amt):
@@ -610,7 +887,12 @@ def get_textures(material):
 
 
 def create_image(img_name, img_path, tex_search):
-    """TODO: Doc."""
+    """Load or create an image texture.
+
+    Tries to load from common image formats first (.tga, .png, .psd, .dds),
+    then falls back to PLT format if available. Creates a placeholder if
+    no file is found.
+    """
     img_dir = os.path.dirname(img_path)
     # List of extensions we try will try to import
     img_ext_list = ['.tga', '.png', '.psd', '.dds']
@@ -625,11 +907,107 @@ def create_image(img_name, img_path, tex_search):
             check_existing=True)
         if img:
             break
+
+    # Try PLT format if standard formats not found
+    if not img:
+        img = load_plt_image(img_name, img_dir, tex_search)
+
     # No image found => create a placeholder image instead
     if not img:
         img = bpy.data.images.new(name=img_name, width=512, height=512)
     img.name = img_name
     return img
+
+
+def load_plt_image(img_name, img_dir, tex_search):
+    """Load a PLT (Packed Layer Texture) file and return a combined image.
+
+    PLT files contain multiple layers (skin, hair, metal, cloth, etc.) that
+    can be colorized in-game. This function loads the PLT and creates a
+    combined grayscale image that can be used as a base texture.
+    """
+    import struct
+
+    # PLT Constants
+    PLT_HEADER_SIGNATURE = b"PLT V1  "
+    PLT_HEADER_SIZE = 24
+
+    # Find the PLT file (case-insensitive)
+    plt_path = find_file_nocase(img_dir, img_name + '.plt')
+    if not plt_path or not os.path.isfile(plt_path):
+        # Try recursive search if enabled
+        if tex_search:
+            plt_path = find_file_recursive(img_dir, img_name + '.plt')
+        if not plt_path:
+            return None
+
+    try:
+        with open(plt_path, "rb") as f:
+            data = f.read()
+    except IOError:
+        return None
+
+    # Validate header
+    if len(data) < PLT_HEADER_SIZE:
+        return None
+
+    signature = data[0:8]
+    if signature != PLT_HEADER_SIGNATURE:
+        return None
+
+    width = struct.unpack_from("<I", data, 16)[0]
+    height = struct.unpack_from("<I", data, 20)[0]
+
+    # Check if we already have this image loaded
+    # Check both naming conventions: {img_name}_plt and {img_name}
+    for check_name in [f"{img_name}_plt", img_name]:
+        if check_name in bpy.data.images:
+            existing = bpy.data.images[check_name]
+            if existing.size[0] == width and existing.size[1] == height:
+                return existing
+
+    # Create a combined grayscale image from all layers
+    combined_name = f"{img_name}_plt"
+    img = bpy.data.images.new(combined_name, width, height, alpha=True)
+    pixels = [0.0] * (width * height * 4)
+
+    for y in range(height):
+        for x in range(width):
+            plt_offset = PLT_HEADER_SIZE + (y * width + x) * 2
+            if plt_offset + 1 >= len(data):
+                continue
+            gray_value = data[plt_offset]
+            # pixel_layer = data[plt_offset + 1]  # Layer info, not needed for combined
+
+            pixel_idx = (y * width + x) * 4
+            gray_float = gray_value / 255.0
+            pixels[pixel_idx] = gray_float      # R
+            pixels[pixel_idx + 1] = gray_float  # G
+            pixels[pixel_idx + 2] = gray_float  # B
+            pixels[pixel_idx + 3] = 1.0         # A
+
+    img.pixels = pixels
+    img.pack()
+    
+    # Register for autoreload tracking
+    try:
+        from . import nvb_plt_autoreload
+        nvb_plt_autoreload.register_plt_file(plt_path, img_name)
+    except ImportError:
+        pass
+    
+    print(f"NeverBlender: Loaded PLT texture '{img_name}' ({width}x{height})")
+    return img
+
+
+def find_file_recursive(search_dir, filename):
+    """Recursively search for a file in directory (case-insensitive)."""
+    filename_lower = filename.lower()
+    for root, dirs, files in os.walk(search_dir):
+        for f in files:
+            if f.lower() == filename_lower:
+                return os.path.join(root, f)
+    return None
 
 
 def build_mesh(vertices, faces, mesh_name, vpf=3):

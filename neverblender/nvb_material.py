@@ -146,6 +146,11 @@ class Material(object):
             self.mtr_read(options)
             self.mtr_merge()
 
+        # Fallback: if we have a materialname but no texture yet (no .mtr file found),
+        # use the materialname as the texture name (common NWN convention)
+        if not self.texture_list[0] and self.materialname:
+            self.texture_list[0] = self.materialname
+
         if options.mat_mtr_lowercase:
             self.texture_list = [t.lower() if t else t for t in self.texture_list]
         # Look for similar materials to avoid duplicates
@@ -165,7 +170,19 @@ class Material(object):
                 blender_mat.nvb.mtr.shader_vs = self.mtr_data.customshaderVS
                 blender_mat.nvb.mtr.shader_gs = self.mtr_data.customshaderGS
                 blender_mat.nvb.mtr.shader_fs = self.mtr_data.customshaderFS
-            blender_mat.use_nodes = True
+                # Copy parameters from MTR file
+                for param_name, (param_type, param_values) in self.mtr_data.parameters.items():
+                    param = blender_mat.nvb.mtr.param_list.add()
+                    param.pname = param_name
+                    param.ptype = param_type
+                    param.pvalue = ' '.join(str(v) for v in param_values)
+            # Blender version compatibility for material node tree:
+            # - Blender < 4.0: use_nodes must be set to True to create the node_tree
+            # - Blender 4.0+: use_nodes is deprecated (always True), node_tree auto-created
+            # - Blender 5.0+: bpy.data.materials.new() automatically creates default node tree
+            if bpy.app.version < (4, 0, 0):
+                blender_mat.use_nodes = True
+            # Clear existing nodes to start fresh (node_tree always exists in 4.0+)
             blender_mat.node_tree.nodes.clear()
             Materialnode.add_node_data(blender_mat, blen_mat_name, self.texture_list, options)
         return blender_mat

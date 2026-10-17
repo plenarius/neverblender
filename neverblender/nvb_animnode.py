@@ -48,10 +48,20 @@ class Animnode():
         return self.object_data or self.emitter_data
 
     @staticmethod
-    def insert_kfp(frames, values, action, dp, dp_dim, action_group=None):
-        """TODO: DOC."""
+    def insert_kfp(frames, values, action, dp, dp_dim, action_group=None, target=None):
+        """Insert keyframe points into fcurves.
+        
+        Args:
+            frames: List of frame numbers
+            values: List of values (each value is a tuple/list of components)
+            action: The action to insert keyframes into
+            dp: Data path for the fcurves
+            dp_dim: Number of dimensions (components) in the data path
+            action_group: Optional group name for the fcurves
+            target: Target object (required for Blender 5.0+)
+        """
         if frames and values:
-            fcu = [nvb_utils.get_fcurve(action, dp, i, action_group)
+            fcu = [nvb_utils.get_fcurve(action, dp, i, action_group, target)
                    for i in range(dp_dim)]
             kfp_list = [fcu[i].keyframe_points for i in range(dp_dim)]
             kfp_cnt = list(map(lambda x: len(x), kfp_list))
@@ -200,7 +210,7 @@ class Animnode():
                 values = [d[1:data_dim+1] for d in data]
                 dp = data_path
                 dp_dim = data_dim
-            Animnode.insert_kfp(frames, values, action, dp, dp_dim)
+            Animnode.insert_kfp(frames, values, action, dp, dp_dim, target=obj)
 
     def create_data_emitter(self, obj, anim, options):
         """Creates animations in emitter actions."""
@@ -221,9 +231,10 @@ class Animnode():
             dp_dim = data_dim
             if dp.startswith('nvb'):  # Group custom properties
                 Animnode.insert_kfp(frames, values, action, dp, dp_dim,
-                                    'Aurora Emitter')
+                                    'Aurora Emitter', target=part_settings)
             else:
-                Animnode.insert_kfp(frames, values, action, dp, dp_dim)
+                Animnode.insert_kfp(frames, values, action, dp, dp_dim,
+                                    target=part_settings)
 
     def create_data_shape(self, obj, anim, animlength, options):
         """Import animated vertices as shapekeys."""
@@ -258,7 +269,7 @@ class Animnode():
         # Insert keyframes
         kfOptions = {'FAST'}
         sample_dist = fps * self.sampleperiod
-        fcu = nvb_utils.get_fcurve(action, 'eval_time', 0)
+        fcu = nvb_utils.get_fcurve(action, 'eval_time', 0, target=shape_keys)
         for idx, eval_time in enumerate(sk_frame_list):
             kfp_frame = frame_start + (idx * sample_dist)
             fcu.keyframe_points.insert(kfp_frame, eval_time, options=kfOptions)
@@ -304,16 +315,20 @@ class Animnode():
         action = animData.action
         if not action:
             return  # No action = no animation = no need for rest pose
+        # Get fcurves using our compatibility helper
+        fcurves = nvb_utils.get_action_fcurves(action, obj)
+        if not fcurves:
+            return
         if obj.rotation_mode == 'AXIS_ANGLE':
             dp = 'rotation_axis_angle'
-            fcu = [action.fcurves.find(data_path=dp, index=i)
+            fcu = [fcurves.find(data_path=dp, index=i)
                    for i in range(4)]
             if fcu.count(None) < 1:
                 rr = obj.nvb.restrot
                 insert_kfp(fcu, frame, [rr[3], rr[0], rr[1], rr[2]], 4)
         if obj.rotation_mode == 'QUATERNION':
             dp = 'rotation_quaternion'
-            fcu = [action.fcurves.find(data_path=dp, index=i)
+            fcu = [fcurves.find(data_path=dp, index=i)
                    for i in range(4)]
             if fcu.count(None) < 1:
                 rr = obj.nvb.restrot
@@ -321,13 +336,13 @@ class Animnode():
                 insert_kfp(fcu, frame, [q.w, q.x, q.y, q.z], 4)
         else:
             dp = 'rotation_euler'
-            fcu = [action.fcurves.find(data_path=dp, index=i)
+            fcu = [fcurves.find(data_path=dp, index=i)
                    for i in range(3)]
             if fcu.count(None) < 1:
                 eul = mathutils.Quaternion(obj.nvb.restrot[:3],
                                            obj.nvb.restrot[3]).to_euler()
                 insert_kfp(fcu, frame, eul, 3)
-        fcu = [action.fcurves.find(data_path='location', index=i)
+        fcu = [fcurves.find(data_path='location', index=i)
                for i in range(3)]
         if fcu.count(None) < 1:
             insert_kfp(fcu, frame, obj.nvb.restloc, 3)
@@ -365,7 +380,6 @@ class Animnode():
     @staticmethod
     def get_keys_emitter(psy, anim, key_data, options):
         """Get keys from particle settings."""
-
         action = psy.animation_data.action
         if not action:
             return
@@ -378,7 +392,7 @@ class Animnode():
                 Animnode.emitter_properties.items():
             exports.append([aur_name, dp_dim, aur_fstr, dp, dp_dim])
         # Get keyframe data
-        all_fcurves = getattr(action, 'fcurves', None)
+        all_fcurves = nvb_utils.get_action_fcurves(action, psy)
         if all_fcurves is None:
             return
         for aur_name, aur_dim, aur_fstr, dp, dp_dim in exports:
@@ -486,7 +500,7 @@ class Animnode():
             # List of exportable data paths with formats and conversion functions
             exports = get_exports(obj.rotation_mode)
             # Get keyframe data
-            all_fcurves = getattr(action, 'fcurves', None)
+            all_fcurves = nvb_utils.get_action_fcurves(action, obj)
             if all_fcurves is None:
                 return
             for aur_name, aur_dim, aur_fstr, dp, dp_dim, dp_conversion, default_val in exports:
@@ -540,7 +554,6 @@ class Animnode():
     def generate_ascii_animesh_shapes(obj, anim, ascii_lines, options,
                                       required_samples=0):
         """Add data for animated vertices."""
-
         # Must be absolute shapekeys
         shape_keys = obj.data.shape_keys
         if not shape_keys or shape_keys.use_relative:
@@ -555,7 +568,10 @@ class Animnode():
         except AttributeError:
             return -1
         # Get eval time fcurve
-        fcu = action.fcurves.find(data_path='eval_time', index=0)
+        fcurves = nvb_utils.get_action_fcurves(action, shape_keys)
+        if not fcurves:
+            return -1
+        fcu = fcurves.find(data_path='eval_time', index=0)
         if not fcu:
             return -1
         # Gather animation data

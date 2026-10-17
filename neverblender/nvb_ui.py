@@ -267,6 +267,18 @@ class NVB_PT_armature(bpy.types.Panel):
         box.prop(obj.nvb, 'util_psb_anim_overwrite_anims')
         box.operator('nvb.amt_amt2psb', text='Copy Animations',
                      icon='UV_DATA').use_existing = True
+        
+        # Update single animation in-place
+        box.separator()
+        sub = box.column()
+        target = obj.nvb.util_psb_anim_target
+        if target and len(target.nvb.animList) > 0:
+            anim = target.nvb.animList[target.nvb.animListIdx]
+            sub.label(text=f'Update: "{anim.name}" ({anim.frameStart}-{anim.frameEnd})')
+        else:
+            sub.label(text='Update: (select target with animations)')
+        sub.operator('nvb.amt_update_anim', text='Update Selected Animation',
+                     icon='FILE_REFRESH')
         layout.separator()
 
 
@@ -844,6 +856,9 @@ class NVB_PT_utils(bpy.types.Panel):
             row.prop(addon_prefs, 'util_amt_strip_name')
             row = box.row()
             row.prop(addon_prefs, 'util_amt_ignore_invisible')
+            row.prop(addon_prefs, 'util_amt_hook_skinmeshes')
+            row = box.row()
+            row.prop(addon_prefs, 'util_amt_use_world_coords')
             box.operator('nvb.amt_psb2amt', icon='BONE_DATA')
             layout.separator()
 

@@ -12,8 +12,9 @@ class Materialnode(object):
     @staticmethod
     def get_output_node(material):
         """Search for the output node in this node list."""
-        # Material has to use nodes
-        if not (material.use_nodes and material.node_tree):
+        # Material has to have a node tree
+        # Blender 4.0+: use_nodes was removed, materials always have node trees
+        if not material.node_tree:
             return None
         # Grab all outputs
         output_nodes = [n for n in material.node_tree.nodes if n.type == 'OUTPUT_MATERIAL']
@@ -139,6 +140,8 @@ class Materialnode(object):
                 texture_list[4] = Materialnode.get_texture_name(matching_nodes[0]) if matching_nodes else None
 
                 # Emissive
+                # Only match texture nodes specifically named for emission to avoid
+                # picking up the diffuse texture through the selfillum color mix chain
                 if 'Emissive Color' in shader_node.inputs: # Evee specular shader
                     input_socket_name = 'Emissive Color'  # Blender 4.0, bdsf shader
                 elif 'Emission Color' in shader_node.inputs:
@@ -146,7 +149,7 @@ class Materialnode(object):
                 else:
                     input_socket_name = 'Emission'  # Blender 3.6, bdsf shader
                 matching_nodes = Materialnode.get_connected_nodes(origin_socket=shader_node.inputs[input_socket_name],
-                                                                  matching_node=lambda n: n.type.startswith('TEX_'))
+                                                                  matching_node=lambda n: n.type.startswith('TEX_') and n.name == 'texture_emission')
                 texture_list[5] = Materialnode.get_texture_name(matching_nodes[0]) if matching_nodes else None
 
         return texture_list

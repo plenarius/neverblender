@@ -13,6 +13,7 @@ from . import nvb_node
 from . import nvb_anim
 from . import nvb_def
 from . import nvb_utils
+from . import nvb_decompile
 
 
 class Mdl():
@@ -195,12 +196,24 @@ class Mdl():
     def parse_mdl(self, mdl_filepath, options):
         """Parse a single mdl file."""
         if Mdl.is_binary(mdl_filepath):
-            # Binary modles have to be decompiled
-            if not options.compiler_use:
-                print("Neverblender: WARNING - Detected binary MDL with disabled external compiler.")
-            elif not os.path.isfile(options.compiler_path):
-                print("Neverblender: WARNING - Detected binary MDL with invalid path to external compiler.")
-            else:
+            # Binary models need to be decompiled first
+            # Try built-in decompiler first, then fall back to external if configured
+            decompiled = False
+            
+            # Use built-in decompiler
+            try:
+                print("Neverblender: Decompiling binary MDL using built-in decompiler...")
+                ascii_content = nvb_decompile.decompile(mdl_filepath)
+                if ascii_content:
+                    self.read_ascii_mdl(ascii_content, options)
+                    decompiled = True
+                    print("Neverblender: Binary MDL decompiled successfully.")
+            except Exception as e:
+                print(f"Neverblender: Built-in decompiler failed: {e}")
+                
+            # Fall back to external compiler if built-in failed and external is configured
+            if not decompiled and options.compiler_use and os.path.isfile(options.compiler_path):
+                print("Neverblender: Trying external decompiler as fallback...")
                 # - Create named temporay file (named because we'll need full access for subprocesses)
                 # - Windows issue: Can't use auto-delete. It will lock the file when copyfile() closes it, making it inaccessible
                 # - Windows issue: Can't use Windows default tempfile directory as working dir, cleanmodels doesn't have permissions for wirting there
@@ -220,12 +233,17 @@ class Mdl():
                         if result.returncode == 0:
                             # If succesful pass the resulting file to the ascii parser
                             self.read_ascii_mdl(tf.read(), options)
+                            decompiled = True
                         else:
-                            print("Neverblender: ERROR - Could not decompile file.")
+                            print("Neverblender: ERROR - External decompiler returned error.")
                 finally:
                     tf.close()
                     os.remove(tf.name)
+            
+            if not decompiled:
+                print("Neverblender: ERROR - Could not decompile binary MDL file.")
                 """
+                # Legacy external compiler code preserved for reference
                 # Does only work with nwnmdlcomp, not cleanmodels
                 # We need to prevent auto-deletion and delete manually ourselves,
                 # (on Windows access to the tempfile will be blocked after running the decompiler)
