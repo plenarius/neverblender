@@ -377,6 +377,59 @@ def get_active_collection(context):
     return collection
 
 
+class _NoChannels:
+    """Stand-in for an action with no animation data yet (Blender 5.0+)."""
+    class _Empty(list):
+        def find(self, data_path, index=0):
+            return None
+    fcurves = _Empty()
+    groups = {}
+
+
+def action_channels(action, create=False):
+    """Return what holds an action's F-Curves and groups.
+
+    Up to Blender 4.5 that is the action itself (action.fcurves and
+    action.groups). Blender 5.0 removed those: F-Curves live in the channelbag
+    of an action slot. Neverblender uses one slot per action, the first.
+    With create=True a channelbag is made if the slot has none yet.
+    """
+    if hasattr(action, "fcurves"):
+        return action
+    from bpy_extras import anim_utils
+    if not action.slots:
+        if not create:
+            return _NoChannels()
+        # An action made before it is assigned (the armature tools do this):
+        # everything Neverblender keys on such an action is an object.
+        action.slots.new(id_type='OBJECT', name=action.name)
+    slot = action.slots[0]
+    if create:
+        return anim_utils.action_ensure_channelbag_for_slot(action, slot)
+    return anim_utils.action_get_channelbag_for_slot(action, slot) or _NoChannels()
+
+
+def action_fcurves(action, create=False):
+    """The F-Curves of an action, on any Blender version (see action_channels)."""
+    return action_channels(action, create).fcurves
+
+
+def assign_action(target, action):
+    """Assign an action to target (an ID with animation data).
+
+    Blender 5.0+ only plays an action through a slot of the target's ID type,
+    so one is made and assigned when the target has none.
+    """
+    anim_data = target.animation_data or target.animation_data_create()
+    anim_data.action = action
+    if hasattr(action, "fcurves") or anim_data.action_slot is not None:
+        return
+    slot = next((s for s in action.slots if s.target_id_type == target.id_type), None)
+    if slot is None:
+        slot = action.slots.new(id_type=target.id_type, name=target.name)
+    anim_data.action_slot = slot
+
+
 def get_fcurve(action, data_path, index=0, group_name=None, target=None):
     """Get the fcurve with specified properties or create one.
 
@@ -1340,3 +1393,32 @@ def create_setfile(mdl_list, ignore_stored_tile_id, store_tile_id, strip_trailin
         ascii_lines.append("")
 
     return ascii_lines
+
+def mesh_has_auto_smooth():
+    """True up to Blender 4.0; 4.1 removed Mesh.use_auto_smooth/auto_smooth_angle."""
+    return "use_auto_smooth" in bpy.types.Mesh.bl_rna.properties
+
+
+SPLIT_ANGLE_KEY = "nvb_split_angle"  # mesh custom property, Blender 4.1+
+
+
+def mesh_set_split_angle(mesh, angle):
+    """Blender 4.1+: remember the auto smooth angle Neverblender used to set.
+
+    The exporter splits edges sharper than this angle (as auto smooth did),
+    without making them sharp edges, which would change the smoothing groups.
+    None means no angle split.
+    """
+    if angle is None:
+        if SPLIT_ANGLE_KEY in mesh:
+            del mesh[SPLIT_ANGLE_KEY]
+    else:
+        mesh[SPLIT_ANGLE_KEY] = float(angle)
+
+
+def mesh_split_angle(mesh):
+    """The angle above which the exporter splits edges (3.14: no angle split)."""
+    if mesh_has_auto_smooth():
+        return mesh.auto_smooth_angle if mesh.use_auto_smooth else 3.14
+    return float(mesh.get(SPLIT_ANGLE_KEY, 3.14))
+

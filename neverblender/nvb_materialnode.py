@@ -2,6 +2,7 @@
 
 import os
 import collections
+import bpy
 
 from . import nvb_utils
 
@@ -12,9 +13,11 @@ class Materialnode(object):
     @staticmethod
     def get_output_node(material):
         """Search for the output node in this node list."""
-        # Material has to have a node tree
-        # Blender 4.0+: use_nodes was removed, materials always have node trees
+        # Material has to have a node tree, and up to Blender 4.5 use it
+        # (Blender 5.0 always uses it and deprecates use_nodes)
         if not material.node_tree:
+            return None
+        if bpy.app.version < (5, 0, 0) and not material.use_nodes:
             return None
         # Grab all outputs
         output_nodes = [n for n in material.node_tree.nodes if n.type == 'OUTPUT_MATERIAL']

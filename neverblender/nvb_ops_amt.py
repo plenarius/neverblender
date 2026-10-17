@@ -322,7 +322,7 @@ class NVB_OT_amt_amt2psb(bpy.types.Operator):
         psd_action = psd_bone.animation_data.action
         if not psd_action:
             psd_action = bpy.data.actions.new(name=psd_bone.name)
-            psd_bone.animation_data.action = psd_action
+            nvb_utils.assign_action(psd_bone, psd_action)
         # All fcurves of the armature
         source_fcu = nvb_utils.get_action_fcurves(amt_action, amt)
         if not source_fcu:

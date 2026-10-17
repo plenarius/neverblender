@@ -176,13 +176,11 @@ class Material(object):
                     param.pname = param_name
                     param.ptype = param_type
                     param.pvalue = ' '.join(str(v) for v in param_values)
-            # Blender version compatibility for material node tree:
-            # - Blender < 4.0: use_nodes must be set to True to create the node_tree
-            # - Blender 4.0+: use_nodes is deprecated (always True), node_tree auto-created
-            # - Blender 5.0+: bpy.data.materials.new() automatically creates default node tree
-            if bpy.app.version < (4, 0, 0):
+            # A new material has no node tree up to Blender 4.5 until
+            # use_nodes is set; Blender 5.0 creates one (and deprecates
+            # use_nodes).
+            if blender_mat.node_tree is None:
                 blender_mat.use_nodes = True
-            # Clear existing nodes to start fresh (node_tree always exists in 4.0+)
             blender_mat.node_tree.nodes.clear()
             Materialnode.add_node_data(blender_mat, blen_mat_name, self.texture_list, options)
         return blender_mat

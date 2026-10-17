@@ -233,9 +233,9 @@ def create_plt_material(base_name, images, width, height):
     else:
         mat = bpy.data.materials.new(name=mat_name)
 
-    # Blender < 4.0: use_nodes must be set to True to create the node_tree
-    # Blender 4.0+: use_nodes was removed, node_tree is created automatically
-    if bpy.app.version < (4, 0, 0):
+    # A new material has no node tree up to Blender 4.5 until use_nodes is
+    # set; Blender 5.0 creates one (and deprecates use_nodes).
+    if mat.node_tree is None:
         mat.use_nodes = True
 
     nodes = mat.node_tree.nodes

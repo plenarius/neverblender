@@ -485,59 +485,41 @@ class Trimesh(Node):
             # Single smooth group with id=0   =>   Non-smooth
             if len(sgr_list_unique) == 1 and sgr_list_unique.pop() == 0:
                 blen_mesh.polygons.foreach_set('use_smooth', [False] * num_blen_polygons)
-                # Blender 5.0: use_auto_smooth removed, meshes always use custom normals
-                # Set all edges as sharp for non-smooth meshes
-                for edge in blen_mesh.edges:
-                    edge.use_edge_sharp = True
+                if nvb_utils.mesh_has_auto_smooth():
+                    blen_mesh.use_auto_smooth = False
+                    blen_mesh.auto_smooth_angle = 4.71
+                else:
+                    nvb_utils.mesh_set_split_angle(blen_mesh, None)
                 self.tmp_recommend_smoothgroup_setting = 'SEPR'
                 #blen_mesh.nvb.smoothgroup = 'SEPR'
             else:
                 blen_mesh.polygons.foreach_set('use_smooth', [True] * num_blen_polygons)
-                # Blender 5.0: use_auto_smooth removed, sharp edges are set per-edge
+                if nvb_utils.mesh_has_auto_smooth():
+                    blen_mesh.use_auto_smooth = True
+                    blen_mesh.auto_smooth_angle = 1.57
+                else:
+                    # Blender 4.1+ has no auto smooth. Keep its angle on the
+                    # mesh for the export split (see generateAsciiMesh).
+                    # Marking those edges sharp instead would change the
+                    # exported smoothing groups, and so the shading in game.
+                    nvb_utils.mesh_set_split_angle(blen_mesh, 1.57)
                 self.create_sharp_edges(blen_mesh, [fd[3] for fd in self.facedef])
                 self.tmp_recommend_smoothgroup_setting = 'AUTO'
                 #blen_mesh.nvb.smoothgroup = 'AUTO'
 
         if self.normals and blen_mesh.loops and options.geom_normals:
-            # Create normals and use them for shading
-            blen_mesh.vertices.foreach_set('normal', unpack_list(self.normals))
-
-            # Blender 5.0: create_normals_split() removed, use normals_split_custom_set directly
-            # Build per-loop normals from per-vertex normals
-            # Guard against invalid vertex indices
-            normals_count = len(self.normals)
-            loop_count = len(blen_mesh.loops)
-
-            # Only set custom normals if we have valid data
-            if normals_count > 0 and loop_count > 0:
-                import math
-                per_loop_normals = []
-                valid = True
-                for vidx_list in face_vert_ids:
-                    for vidx in vidx_list:
-                        if 0 <= vidx < normals_count:
-                            normal = self.normals[vidx]
-                            # Validate normal is a proper tuple/list of 3 finite floats
-                            if (isinstance(normal, (tuple, list)) and len(normal) == 3 and
-                                all(isinstance(n, (int, float)) and math.isfinite(n) for n in normal)):
-                                per_loop_normals.append(normal)
-                            else:
-                                valid = False
-                                break
-                        else:
-                            # Invalid vertex index - skip custom normals entirely
-                            valid = False
-                            break
-                    if not valid:
-                        break
-
-                # Only call normals_split_custom_set if we have exactly the right count
-                if valid and len(per_loop_normals) == loop_count:
-                    try:
-                        blen_mesh.normals_split_custom_set(per_loop_normals)
-                    except Exception as e:
-                        print(f"NeverBlender: Warning - Could not set custom normals: {e}")
-            # Blender 5.0: custom normals are always used when they exist
+            # Create normals and use them for shading: one custom normal per
+            # face corner, taken from the corner's vertex. (Vertex and loop
+            # normals are read-only since Blender 4.1, and custom normals no
+            # longer need auto smooth.)
+            per_loop_normals = [tuple(self.normals[vidx])
+                                for vidx_list in face_vert_ids
+                                for vidx in vidx_list]
+            if nvb_utils.mesh_has_auto_smooth():
+                blen_mesh.create_normals_split()
+            blen_mesh.normals_split_custom_set(per_loop_normals)
+            if nvb_utils.mesh_has_auto_smooth():
+                blen_mesh.use_auto_smooth = True
 
         if options.geom_mesh_validation:
             blen_mesh.validate(verbose=True, clean_customdata=False)
@@ -739,18 +721,9 @@ class Trimesh(Node):
 
         # Triangulate and split
         do_split = options.geom_smoothing_split and (obj.nvb.meshtype != nvb_def.Meshtype.AABB)
-        # Blender 5.0: use_auto_smooth/auto_smooth_angle removed
-        # Use a default split angle of 30 degrees (pi/6 radians ~= 0.52)
-        # or check for a Smooth by Angle modifier if present
-        do_split_angle = 3.14  # default: no splitting by angle
-        for mod in obj.modifiers:
-            if mod.type == 'NODES' and mod.node_group and 'Smooth by Angle' in mod.node_group.name:
-                # Try to get the angle from the modifier
-                try:
-                    do_split_angle = mod["Socket_1"]  # Default socket name for angle
-                except (KeyError, TypeError):
-                    do_split_angle = 0.52  # ~30 degrees default
-                break
+        # The auto smooth angle (Blender 4.0) or, from 4.1 on, the split angle
+        # kept on the mesh at import (nvb_utils.mesh_split_angle).
+        do_split_angle = nvb_utils.mesh_split_angle(obj.data)
         mesh_triangulate(me, do_split, do_split_angle)
 
         # Add vertices
