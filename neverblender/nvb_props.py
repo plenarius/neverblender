@@ -1175,7 +1175,7 @@ class NVB_PG_object(bpy.types.PropertyGroup):
                        ('SING',
                         'Single', 'All faces belong to the same group', 1),
                        ('AUTO',
-                        'Auto', 'Generate groups from sharp edges', 2)
+                        'Auto', 'Keep the groups the model was imported with; otherwise generate groups from sharp edges', 2)
                        ],
                 default='AUTO', options=set())
     shadow: bpy.props.BoolProperty(name='Shadow',

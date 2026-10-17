@@ -476,6 +476,11 @@ class Trimesh(Node):
         # Create Vertex colors
         Trimesh.create_vertex_colors(blen_mesh, self.colors, 'colors')
 
+        # Keep each face's smoothing group as read from the mdl, so the
+        # export can write it back unchanged (see mesh_get_smoothgroups).
+        if self.facedef:
+            nvb_utils.mesh_store_smoothgroups(blen_mesh, [fd[3] for fd in self.facedef])
+
         # Import smooth groups as sharp edges
         self.tmp_recommend_smoothgroup_setting = ''
         blen_mesh.update()
@@ -615,6 +620,13 @@ class Trimesh(Node):
                 # All faces belong to group 1 (every edge is smooth)
                 group_ids = [1] * len(blen_mesh.polygons)
             else:
+                # The groups the model was imported with, if it was: writing
+                # them back keeps the shading the game computes from them.
+                # Recomputing them from sharp edges (below) loses groups that
+                # share a bit and so changes the normals of untouched faces.
+                stored = nvb_utils.mesh_stored_smoothgroups(blen_mesh)
+                if stored is not None:
+                    return stored
                 # Calculate smoothing groups from sharp edges or auto angle setting
                 # NWN seems to use bitflag groups (smoothing groups of standard model all have powers of 2)
                 if options.geom_smoothing_group_distinct:

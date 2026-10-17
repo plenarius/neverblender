@@ -1422,3 +1422,31 @@ def mesh_split_angle(mesh):
         return mesh.auto_smooth_angle if mesh.use_auto_smooth else 3.14
     return float(mesh.get(SPLIT_ANGLE_KEY, 3.14))
 
+
+SMOOTHGROUP_ATTR = "nvb_smoothgroup"  # face attribute: the face's smoothing group from the mdl
+
+
+def mesh_store_smoothgroups(mesh, groups):
+    """Keep each face's smoothing group from the mdl in a face attribute.
+
+    Blender carries face attributes through edits (an extruded or subdivided
+    face takes its source face's value), so faces added while editing get a
+    sensible group and untouched faces keep theirs.
+    """
+    if len(groups) != len(mesh.polygons):
+        return
+    attr = mesh.attributes.get(SMOOTHGROUP_ATTR)
+    if attr is None:
+        attr = mesh.attributes.new(SMOOTHGROUP_ATTR, 'INT', 'FACE')
+    attr.data.foreach_set('value', [int(g) for g in groups])
+
+
+def mesh_stored_smoothgroups(mesh):
+    """The per-face smoothing groups kept at import, or None if there are none."""
+    attr = mesh.attributes.get(SMOOTHGROUP_ATTR)
+    if attr is None or attr.domain != 'FACE' or attr.data_type != 'INT':
+        return None
+    groups = [0] * len(mesh.polygons)
+    attr.data.foreach_get('value', groups)
+    return groups
+
