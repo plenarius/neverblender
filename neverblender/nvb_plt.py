@@ -8,6 +8,8 @@ import os
 import struct
 
 import bpy
+
+from . import nvb_utils
 from bpy.props import StringProperty, BoolProperty
 from bpy_extras.io_utils import ImportHelper, ExportHelper
 
@@ -270,16 +272,15 @@ def create_plt_material(base_name, images, width, height):
             prev_color_socket = tex_node.outputs['Color']
         else:
             # Mix with previous using alpha
-            mix_node = nodes.new('ShaderNodeMix')
-            mix_node.data_type = 'RGBA'
+            mix_node = nvb_utils.new_color_mix(nodes)
             mix_node.location = (-100, y_offset - i * 150)
             mix_node.label = f"Mix {layer_info['display']}"
 
-            links.new(prev_color_socket, mix_node.inputs[6])  # A (color)
-            links.new(tex_node.outputs['Color'], mix_node.inputs[7])  # B (color)
-            links.new(tex_node.outputs['Alpha'], mix_node.inputs[0])  # Factor
+            links.new(prev_color_socket, nvb_utils.mix_a(mix_node))  # A (color)
+            links.new(tex_node.outputs['Color'], nvb_utils.mix_b(mix_node))  # B (color)
+            links.new(tex_node.outputs['Alpha'], nvb_utils.mix_fac(mix_node))  # Factor
 
-            prev_color_socket = mix_node.outputs[2]  # Result
+            prev_color_socket = nvb_utils.mix_out(mix_node)  # Result
 
     if prev_color_socket:
         links.new(prev_color_socket, bsdf_node.inputs['Base Color'])

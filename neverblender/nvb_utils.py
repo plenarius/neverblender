@@ -1462,3 +1462,43 @@ def store_cleanmodels_findings(scene, findings):
             setattr(item, key, str(f.get(key, "")))
     return len(coll)
 
+
+
+# Colour mix nodes. Blender 3.4 replaced MixRGB with the generic Mix node,
+# whose colour sockets are inputs 6 and 7 and output 2 (data type RGBA);
+# MixRGB, all Blender 3.3 has, uses inputs 1 and 2 and output 0.
+_MIX_SOCKETS = {'ShaderNodeMix': (0, 6, 7, 2), 'ShaderNodeMixRGB': (0, 1, 2, 0)}
+
+
+def new_color_mix(nodes):
+    """A colour mix node on any Blender version (see _MIX_SOCKETS)."""
+    if hasattr(bpy.types, 'ShaderNodeMix'):
+        node = nodes.new('ShaderNodeMix')
+        node.data_type = 'RGBA'
+        return node
+    return nodes.new('ShaderNodeMixRGB')
+
+
+def mix_fac(node):
+    return node.inputs[_MIX_SOCKETS[node.bl_idname][0]]
+
+
+def mix_a(node):
+    return node.inputs[_MIX_SOCKETS[node.bl_idname][1]]
+
+
+def mix_b(node):
+    return node.inputs[_MIX_SOCKETS[node.bl_idname][2]]
+
+
+def mix_out(node):
+    return node.outputs[_MIX_SOCKETS[node.bl_idname][3]]
+
+
+def mix_clamp(node):
+    """Clamp a colour mix node's factor and result."""
+    if node.bl_idname == 'ShaderNodeMix':
+        node.clamp_factor = True
+        node.clamp_result = True
+    else:
+        node.use_clamp = True

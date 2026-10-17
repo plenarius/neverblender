@@ -223,19 +223,17 @@ class Materialnode(object):
         node_diff_attr.attribute_name = 'nvb.diffuse'
 
         # Add an extra mix rgb node and link it
-        node_diff_mix = nodes.new('ShaderNodeMix')
+        node_diff_mix = nvb_utils.new_color_mix(nodes)
         node_diff_mix.label = "Color: Diffuse"
-        node_diff_mix.data_type = 'RGBA'
         node_diff_mix.blend_type = 'MULTIPLY'
         node_diff_mix.location = (-1300, 900)
-        node_diff_mix.clamp_factor = True
-        node_diff_mix.clamp_result = True
-        node_diff_mix.inputs[0].default_value = 1.0  # factor
-        node_diff_mix.inputs[6].default_value = (1.0,1.0,1.0, 0.0) # A
-        node_diff_mix.inputs[7].default_value = (1.0,1.0,1.0, 0.0) # B
+        nvb_utils.mix_clamp(node_diff_mix)
+        nvb_utils.mix_fac(node_diff_mix).default_value = 1.0  # factor
+        nvb_utils.mix_a(node_diff_mix).default_value = (1.0,1.0,1.0, 0.0) # A
+        nvb_utils.mix_b(node_diff_mix).default_value = (1.0,1.0,1.0, 0.0) # B
 
-        links.new(node_shader.inputs['Base Color'], node_diff_mix.outputs[2])
-        links.new(node_diff_mix.inputs[6], node_diff_attr.outputs[0])
+        links.new(node_shader.inputs['Base Color'], nvb_utils.mix_out(node_diff_mix))
+        links.new(nvb_utils.mix_a(node_diff_mix), node_diff_attr.outputs[0])
 
         if texture_list[0]:
             # Setup: Image Texture (Color) => Principled BSDF
@@ -248,7 +246,7 @@ class Materialnode(object):
             node_diff_tex.image.colorspace_settings.name = 'sRGB'
 
             links.new(node_alpha_math.inputs['Value'], node_diff_tex.outputs['Alpha'])
-            links.new(node_diff_mix.inputs[7], node_diff_tex.outputs['Color'])
+            links.new(nvb_utils.mix_b(node_diff_mix), node_diff_tex.outputs['Color'])
 
         # # # # # # # # # # # # # # # # # # #
         # 1 = Normal
@@ -388,18 +386,16 @@ class Materialnode(object):
             node_emit_attr.attribute_name = 'nvb.selfillum'
 
             # Mix node: Multiplies selfillum color from MDL with diffuse color
-            node_emit_mix1 = nodes.new('ShaderNodeMix')
+            node_emit_mix1 = nvb_utils.new_color_mix(nodes)
             node_emit_mix1.label = "Mix: Self-Illumination"
             node_emit_mix1.name = "mix_selfillum_mul"
-            node_emit_mix1.data_type = 'RGBA'
             node_emit_mix1.blend_type = 'MULTIPLY'
             node_emit_mix1.location = (-1358, 3)
-            node_emit_mix1.clamp_result = True
-            node_emit_mix1.clamp_factor = True
-            node_emit_mix1.inputs[0].default_value = 1.0
+            nvb_utils.mix_clamp(node_emit_mix1)
+            nvb_utils.mix_fac(node_emit_mix1).default_value = 1.0
 
-            links.new(node_emit_mix1.inputs[6], node_diff_mix.outputs[2])
-            links.new(node_emit_mix1.inputs[7], node_emit_attr.outputs[0])
+            links.new(nvb_utils.mix_a(node_emit_mix1), nvb_utils.mix_out(node_diff_mix))
+            links.new(nvb_utils.mix_b(node_emit_mix1), node_emit_attr.outputs[0])
 
             # Emissive/selfillum texture (only from mtr, may not be present)
             node_emit_tex = None
@@ -412,27 +408,25 @@ class Materialnode(object):
                 node_emit_tex.image.colorspace_settings.name = 'sRGB'
 
                 # 2nd mix node: Adds emissive texture to MDL selfillum color
-                node_emit_mix2 = nodes.new('ShaderNodeMix')
+                node_emit_mix2 = nvb_utils.new_color_mix(nodes)
                 node_emit_mix2.label = "Mix: Add Self-Illumination"
                 node_emit_mix2.name = "mix_selfillum_add"
-                node_emit_mix2.data_type = 'RGBA'
                 node_emit_mix2.blend_type = 'ADD'
                 node_emit_mix2.location = (-753, 98)
-                node_emit_mix2.clamp_result = True
-                node_emit_mix2.clamp_factor = True
-                node_emit_mix2.inputs[0].default_value = 1.0
-                node_emit_mix2.inputs[6].default_value = (0.0, 0.0, 0.0, 1.0)
-                node_emit_mix2.inputs[7].default_value = (0.0, 0.0, 0.0, 1.0)
+                nvb_utils.mix_clamp(node_emit_mix2)
+                nvb_utils.mix_fac(node_emit_mix2).default_value = 1.0
+                nvb_utils.mix_a(node_emit_mix2).default_value = (0.0, 0.0, 0.0, 1.0)
+                nvb_utils.mix_b(node_emit_mix2).default_value = (0.0, 0.0, 0.0, 1.0)
 
                 # Link 1st mix node inputs
-                links.new(node_emit_mix2.inputs[6], node_emit_mix1.outputs[2])
-                links.new(node_emit_mix2.inputs[7], node_emit_tex.outputs['Color'])
+                links.new(nvb_utils.mix_a(node_emit_mix2), nvb_utils.mix_out(node_emit_mix1))
+                links.new(nvb_utils.mix_b(node_emit_mix2), node_emit_tex.outputs['Color'])
 
                 # Finally link to shader
-                links.new(node_shader.inputs[input_socket_name], node_emit_mix2.outputs[2])
+                links.new(node_shader.inputs[input_socket_name], nvb_utils.mix_out(node_emit_mix2))
             else:  # no emissive texture
                 # link directly to shader
-                links.new(node_shader.inputs[input_socket_name], node_emit_mix1.outputs[2])
+                links.new(node_shader.inputs[input_socket_name], nvb_utils.mix_out(node_emit_mix1))
 
     @staticmethod
     def add_node_data_spec(material, output_label, texture_list, options):
@@ -494,19 +488,17 @@ class Materialnode(object):
         node_diff_attr.attribute_name = 'nvb.diffuse'
 
         # Add an extra mix rgb node and link it
-        node_diff_mix = nodes.new('ShaderNodeMix')
+        node_diff_mix = nvb_utils.new_color_mix(nodes)
         node_diff_mix.label = "Color: Diffuse"
-        node_diff_mix.data_type = 'RGBA'
         node_diff_mix.blend_type = 'MULTIPLY'
         node_diff_mix.location = (-1300, 900)
-        node_diff_mix.clamp_factor = True
-        node_diff_mix.clamp_result = True
-        node_diff_mix.inputs[0].default_value = 1.0  # factor
-        node_diff_mix.inputs[6].default_value = (1.0,1.0,1.0, 0.0) # A
-        node_diff_mix.inputs[7].default_value = (1.0,1.0,1.0, 0.0) # B
+        nvb_utils.mix_clamp(node_diff_mix)
+        nvb_utils.mix_fac(node_diff_mix).default_value = 1.0  # factor
+        nvb_utils.mix_a(node_diff_mix).default_value = (1.0,1.0,1.0, 0.0) # A
+        nvb_utils.mix_b(node_diff_mix).default_value = (1.0,1.0,1.0, 0.0) # B
 
-        links.new(node_shader.inputs['Base Color'], node_diff_mix.outputs[2])
-        links.new(node_diff_mix.inputs[6], node_diff_attr.outputs[0])
+        links.new(node_shader.inputs['Base Color'], nvb_utils.mix_out(node_diff_mix))
+        links.new(nvb_utils.mix_a(node_diff_mix), node_diff_attr.outputs[0])
 
         if texture_list[0]:
             # Setup: Image Texture (Color) => Principled BSDF
@@ -519,7 +511,7 @@ class Materialnode(object):
             node_diff_tex.image.colorspace_settings.name = 'sRGB'
 
             links.new(node_alpha_math.inputs['Value'], node_diff_tex.outputs['Alpha'])
-            links.new(node_diff_mix.inputs[7], node_diff_tex.outputs['Color'])
+            links.new(nvb_utils.mix_b(node_diff_mix), node_diff_tex.outputs['Color'])
 
         # # # # # # # # # # # # # # # # # # #
         # 1 = Normal
@@ -654,18 +646,16 @@ class Materialnode(object):
         node_emit_attr.attribute_name = 'nvb.selfillum'
 
         # Mix node: Multiplies selfillum color from MDL with diffuse color
-        node_emit_mix1 = nodes.new('ShaderNodeMix')
+        node_emit_mix1 = nvb_utils.new_color_mix(nodes)
         node_emit_mix1.label = "Mix: Self-Illumination"
         node_emit_mix1.name = "mix_selfillum_mul"
-        node_emit_mix1.data_type = 'RGBA'
         node_emit_mix1.blend_type = 'MULTIPLY'
         node_emit_mix1.location = (-1358, 3)
-        node_emit_mix1.clamp_result = True
-        node_emit_mix1.clamp_factor = True
-        node_emit_mix1.inputs[0].default_value = 1.0
+        nvb_utils.mix_clamp(node_emit_mix1)
+        nvb_utils.mix_fac(node_emit_mix1).default_value = 1.0
 
-        links.new(node_emit_mix1.inputs[6], node_diff_mix.outputs[2])
-        links.new(node_emit_mix1.inputs[7], node_emit_attr.outputs[0])
+        links.new(nvb_utils.mix_a(node_emit_mix1), nvb_utils.mix_out(node_diff_mix))
+        links.new(nvb_utils.mix_b(node_emit_mix1), node_emit_attr.outputs[0])
 
         # Emissive/selfillum texture (only from mtr, may not be present)
         node_emit_tex = None
@@ -679,27 +669,25 @@ class Materialnode(object):
             node_emit_tex.image.colorspace_settings.name = 'sRGB'
 
             # 2nd mix node: Adds emissive texture to MDL selfillum color
-            node_emit_mix2 = nodes.new('ShaderNodeMix')
+            node_emit_mix2 = nvb_utils.new_color_mix(nodes)
             node_emit_mix2.label = "Mix: Add Self-Illumination"
             node_emit_mix2.name = "mix_selfillum_add"
-            node_emit_mix2.data_type = 'RGBA'
             node_emit_mix2.blend_type = 'ADD'
             node_emit_mix2.location = (-753, 98)
-            node_emit_mix2.clamp_result = True
-            node_emit_mix2.clamp_factor = True
-            node_emit_mix2.inputs[0].default_value = 1.0
-            node_emit_mix2.inputs[6].default_value = (0.0, 0.0, 0.0, 1.0)
-            node_emit_mix2.inputs[7].default_value = (0.0, 0.0, 0.0, 1.0)
+            nvb_utils.mix_clamp(node_emit_mix2)
+            nvb_utils.mix_fac(node_emit_mix2).default_value = 1.0
+            nvb_utils.mix_a(node_emit_mix2).default_value = (0.0, 0.0, 0.0, 1.0)
+            nvb_utils.mix_b(node_emit_mix2).default_value = (0.0, 0.0, 0.0, 1.0)
 
             # Link 1st mix node inputs
-            links.new(node_emit_mix2.inputs[6], node_emit_mix1.outputs[2])
-            links.new(node_emit_mix2.inputs[7], node_emit_tex.outputs['Color'])
+            links.new(nvb_utils.mix_a(node_emit_mix2), nvb_utils.mix_out(node_emit_mix1))
+            links.new(nvb_utils.mix_b(node_emit_mix2), node_emit_tex.outputs['Color'])
 
             # Finally link to shader
-            links.new(node_shader.inputs[input_socket_name], node_emit_mix2.outputs[2])
+            links.new(node_shader.inputs[input_socket_name], nvb_utils.mix_out(node_emit_mix2))
         else:  # no emissive texture
             # link directly to shader
-            links.new(node_shader.inputs[input_socket_name], node_emit_mix1.outputs[2])
+            links.new(node_shader.inputs[input_socket_name], nvb_utils.mix_out(node_emit_mix1))
 
     @staticmethod
     def add_node_data(material, output_name, texture_list, options):

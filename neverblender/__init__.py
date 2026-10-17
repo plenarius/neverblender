@@ -84,7 +84,7 @@ bl_info = {
     "name": "Neverblender",
     "author": "Attila Gyoerkoes",
     'version': (5, 0, 0),
-    "blender": (5, 0, 0),
+    "blender": (3, 3, 0),
     "location": "File > Import-Export, Object Properties",
     "description": "Import, export and edit Aurora mdl format",
     "warning": "",
