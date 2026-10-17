@@ -72,6 +72,19 @@ class Materialnode(object):
         return fail_value
 
     @staticmethod
+    def get_node_identifier(node, fallback_to_name=False):
+        """Return node label if specified or the (unique) node name."""
+        # Restored from Neverblender 2.8: the 4.0 release removed it but
+        # get_texture_name still calls it for a texture node with no image,
+        # which is what re-importing a model whose material is still in the
+        # scene runs into.
+        if node.label:
+            return node.label
+        elif fallback_to_name:
+            return node.name
+        return "ERROR"
+
+    @staticmethod
     def get_texture_name(texture_node, fail_value="ERROR"):
         """Get a texture from a texture node."""
         # No texture node: None=Null
