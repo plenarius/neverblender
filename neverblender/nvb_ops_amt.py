@@ -234,6 +234,9 @@ class NVB_OT_amt_amt2psb(bpy.types.Operator):
             list(map(lambda v: v.rotate(eb_quat_adjusted), vecs))
             return [psb.location + v for v in vecs]
 
+        def convert_scale(amt, posebone, psb, kfvalues, mat_eb):
+            return kfvalues
+
         def convert_axan(amt, posebone, psb, kfvalues, mat_eb):
             mats = [mathutils.Quaternion(v[1:], v[0]).to_matrix().to_4x4()
                     for v in kfvalues]
@@ -284,6 +287,8 @@ class NVB_OT_amt_amt2psb(bpy.types.Operator):
             # (from_data_path, group_name, dimension, conversion function, default value)
             dp_list.append(('location', 'Location', 3,
                             convert_loc, (0.0, 0.0, 0.0)))
+            dp_list.append(('scale', 'Scale', 3,
+                            convert_scale, (1.0, 1.0, 1.0)))                            
             if from_rot_mode == 'AXIS_ANGLE':
                 dp_list.append(('rotation_axis_angle', 'Rotation', 4,
                                 convert_axan, (1.0, 0.0, 0.0, 0.0)))

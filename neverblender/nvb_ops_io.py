@@ -482,6 +482,7 @@ class NVB_OT_mdlimport(bpy.types.Operator, bpy_extras.io_utils.ImportHelper):
         options.geom_mesh_validation = addon_prefs.import_mesh_validation
         # Material Options
         options.mat_import = self.mat_import
+        options.mat_mtr_lowercase = addon_prefs.import_mat_lowercase
         options.mat_automerge = self.mat_merge
         options.mat_shader = self.mat_shader
         options.mat_use_mtr = addon_prefs.import_mat_mtr

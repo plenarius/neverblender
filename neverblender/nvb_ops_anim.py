@@ -193,15 +193,14 @@ class NVB_OT_anim_scale(bpy.types.Operator):
         if padding > 0:
             for a in reversed(mdl_base.nvb.animList):
                 if a.frameStart > anim.frameEnd:
-                    a.frameStart += padding
-                    a.frameEnd += padding
+                    a.frameStart += int(padding)
+                    a.frameEnd += int(padding)
                     for e in a.eventList:
-                        e.frame += padding
+                        e.frame += int(padding)
         # Adjust the target (scaled) animation itself
         anim.frameEnd = int(anim.frameEnd + padding)
         for e in anim.eventList:
-            e.frame = (e.frame - anim.frameStart) * \
-                self.scaleFactor + anim.frameStart
+            e.frame = int((e.frame - anim.frameStart) * self.scaleFactor + anim.frameStart)
         # Re-adjust the timeline to the new bounds
         nvb_utils.toggle_anim_focus(context.scene, mdl_base)
         return {'FINISHED'}
@@ -320,10 +319,10 @@ class NVB_OT_anim_crop(bpy.types.Operator):
         # Update the animations in the list
         for a in mdl_base.nvb.animList:
             if a.frameStart > animStart:
-                a.frameStart -= totalCrop
-                a.frameEnd -= totalCrop
+                a.frameStart -= int(totalCrop)
+                a.frameEnd -= int(totalCrop)
                 for e in a.eventList:
-                    e.frame -= totalCrop
+                    e.frame -= int(totalCrop)
         # Adjust the target animation itself
         for idx, e in enumerate(anim.eventList):
             if (animStart <= e.frame < animStart + cf) or \
@@ -331,7 +330,7 @@ class NVB_OT_anim_crop(bpy.types.Operator):
                 anim.eventList.remove(idx)
                 anim.eventListIdx = 0
             else:
-                e.frame -= totalCrop
+                e.frame -= int(totalCrop)
         anim.frameEnd = int(anim.frameEnd-totalCrop)
         # Re-adjust the timeline to the new bounds
         nvb_utils.toggle_anim_focus(context.scene, mdl_base)
@@ -436,14 +435,14 @@ class NVB_OT_anim_pad(bpy.types.Operator):
         totalPadding = self.pad_back + self.pad_front
         for a in mdl_base.nvb.animList:
             if a.frameStart > frame_end:
-                a.frameStart += totalPadding
-                a.frameEnd += totalPadding
+                a.frameStart += int(totalPadding)
+                a.frameEnd += int(totalPadding)
                 for ev in a.eventList:
-                    ev.frame += totalPadding
+                    ev.frame += int(totalPadding)
         # Update the target animation itself
-        anim.frameEnd += totalPadding
+        anim.frameEnd += int(totalPadding)
         for ev in anim.eventList:
-            ev.frame += self.pad_front
+            ev.frame += int(self.pad_front)
         # Re-adjust the timeline to the new bounds
         nvb_utils.toggle_anim_focus(context.scene, mdl_base)
         return {'FINISHED'}

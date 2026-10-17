@@ -35,7 +35,7 @@ class Material(object):
         return ((a is None) and (b is None)) or \
                (a and b and (sum([math.isclose(v[0], v[1]) for v in zip(a, b)]) == len(a)))
 
-    def generate_material_name(self):
+    def generate_material_name(self, force_lowercase=False):
         """Generates a material name for use in blender."""
         # 'materialname' over 'texture0'/'bitmap' over Default
         if self.mtr_name:
@@ -47,6 +47,8 @@ class Material(object):
             mat_name = self.texture_list[0].lower()
         else:
             mat_name = ""  # Blender will a default name
+        if force_lowercase:
+            mat_name = mat_name.lower()
         return mat_name
 
     def find_blender_material(self, options):
@@ -209,13 +211,15 @@ class Material(object):
             self.color_list[5] = (0.0, 0.0, 0.0, 1.0)
         if options.mat_ignore_selfillum_texture:
              self.texture_list[5] = None
+        if options.mat_mtr_lowercase:
+            self.texture_list = [t.lower() if t else t for t in self.texture_list]
         # Look for similar materials to avoid duplicates
         blender_mat = None
         if options.mat_automerge and not always_create_new:
             blender_mat = self.find_blender_material(options)
         # Create new material if necessary
         if not blender_mat:
-            new_name = self.generate_material_name()
+            new_name = self.generate_material_name(options.mat_mtr_lowercase)
             blender_mat = bpy.data.materials.new(new_name)
             blender_mat.blend_method = 'HASHED'  # 'BLEND' doesn't play nice
             blender_mat.show_transparent_back = False

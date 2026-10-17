@@ -322,8 +322,10 @@ class Animnode():
             face_uv_coords = unpack_list(face_uv_coords)
             uv_layer = obj.data.uv_layers.new(do_init=False)
             uv_layer.name = sample_fstr.format(sample_idx)
-            uv_layer.data.foreach_set(
-                'uv', face_uv_coords[:2*len(uv_layer.data)])
+            try:
+                uv_layer.data.foreach_set('uv', face_uv_coords[:2*len(uv_layer.data)])
+            except:
+                print("Neverblender: ERROR - animtvert data mismatch for " + obj.name)
 
     @staticmethod
     def create_restpose(obj, frame=1):
@@ -382,7 +384,7 @@ class Animnode():
             # Sanity Check: No mesh
             if not obj.data:
                 print("Neverblender: WARNING - No mesh data for " +
-                    obj.name)            
+                    obj.name)
                 return
             # Sanity Check: Sample period can't be 0
             if self.sampleperiod <= 0.00001:
@@ -395,10 +397,11 @@ class Animnode():
                     obj.name)
                 return
             # Import animesh as extra uv maps and shapekeys
-            if self.uvdata:
-                self.create_data_uv(obj, anim, animlength, options)
-            if self.shapedata:
-                self.create_data_shape(obj, anim, animlength, options)
+            if obj.nvb.meshtype == nvb_def.Meshtype.ANIMMESH:
+                if self.uvdata:
+                    self.create_data_uv(obj, anim, animlength, options)
+                if self.shapedata:
+                    self.create_data_shape(obj, anim, animlength, options)
 
     @staticmethod
     def get_keys_emitter(psy, anim, key_data, options):
@@ -654,7 +657,7 @@ class Animnode():
                       if anim_start <= round(k.co[0], 5) <= anim_end + 0.04]
         if not eval_times:
             return -1
-            
+
         # rel_kb = [(kb.frame, kb.data) for kb in key_blocks if not kb.mute]
         anim_verts = []
         for et in eval_times:
@@ -671,7 +674,7 @@ class Animnode():
 
         # Misc data for export
         if not anim_verts:
-            return -1 
+            return -1
 
         num_samples = len(eval_times)
         num_verts = len(anim_verts[0])

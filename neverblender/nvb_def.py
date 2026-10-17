@@ -286,6 +286,7 @@ class ImportOptions():
         self.geom_mesh_validation = False
         # Materials and textures
         self.mat_import = True
+        self.mat_mtr_lowercase = False
         self.mat_automerge = True
         self.mat_shader = ""
         self.mat_use_mtr = True
