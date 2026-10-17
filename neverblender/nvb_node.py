@@ -741,7 +741,9 @@ class Trimesh(Node):
         # Add vertices
         me_vertices = me.vertices
         ascii_lines.append('  verts ' + str(len(me_vertices)))
-        fstr = '   ' + 3 * ' {: 8.5f}'
+        # 7 decimals: about what a 32-bit float holds at model sizes. With 5,
+        # the game's normals on thin two-sided meshes shift after a round trip.
+        fstr = '   ' + 3 * ' {: 10.7f}'
         ascii_lines.extend([fstr.format(*v.co) for v in me_vertices])
 
         # Per face uv indices and a list of their coordinates
