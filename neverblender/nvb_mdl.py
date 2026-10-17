@@ -14,6 +14,7 @@ from . import nvb_anim
 from . import nvb_def
 from . import nvb_utils
 from . import nvb_decompile
+from . import nvb_cleanmodels
 
 
 class Mdl():
@@ -195,6 +196,14 @@ class Mdl():
 
     def parse_mdl(self, mdl_filepath, options):
         """Parse a single mdl file."""
+        if options.cleanmodels_path:
+            # cleanmodels reads binary and ASCII models alike and returns
+            # canonical ASCII; if it can't, fall back to the paths below.
+            ascii_text = nvb_cleanmodels.to_ascii(options.cleanmodels_path, mdl_filepath,
+                                                  options.cleanmodels_game_dir)
+            if ascii_text is not None:
+                self.read_ascii_mdl(ascii_text, options)
+                return
         if Mdl.is_binary(mdl_filepath):
             # Binary models need to be decompiled first
             # Try built-in decompiler first, then fall back to external if configured

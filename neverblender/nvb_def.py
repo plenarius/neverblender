@@ -278,6 +278,9 @@ class ImportOptions():
         self.compiler_use = False
         self.compiler_path = ""
         self.compiler_command = ""
+        # cleanmodels (optional, see nvb_cleanmodels): path if found and enabled
+        self.cleanmodels_path = None
+        self.cleanmodels_game_dir = ""
         # Geometry
         self.geom_import = True
         self.geom_smoothgroups = True
@@ -314,6 +317,12 @@ class ExportOptions():
     """Holds all export options."""
 
     def __init__(self):
+        # cleanmodels (optional, see nvb_cleanmodels)
+        self.cleanmodels_path = None
+        self.cleanmodels_game_dir = ""
+        self.cleanmodels_check = False
+        self.cleanmodels_compile = False
+        self.cleanmodels_findings = []
         """TODO: DOC."""
         self.filepath = ""
         self.mdlname = "unnamed"

@@ -1,5 +1,7 @@
 """TODO: DOC."""
 
+import os
+
 import bpy
 
 from . import nvb_ops
@@ -1133,3 +1135,50 @@ class NVB_PT_emitter(bpy.types.Panel):
         col.prop(part_settings.nvb, "inherit_local")
         col.prop(part_settings.nvb, "inherit_part")
         layout.separator()
+
+
+class NVB_UL_cmfindings(bpy.types.UIList):
+    """List of cleanmodels findings from the last export."""
+
+    def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):
+        icons = {"fatal": 'CANCEL', "error": 'ERROR', "warning": 'ERROR', "info": 'INFO'}
+        row = layout.row(align=True)
+        row.label(text="{}: {}".format(item.check, item.node or os.path.basename(item.file)),
+                  icon=icons.get(item.severity, 'INFO'))
+        if item.node:
+            op = row.operator("nvb.cm_select_node", text="", icon='RESTRICT_SELECT_OFF')
+            op.node = item.node
+
+
+class NVB_PT_cleanmodels(bpy.types.Panel):
+    """cleanmodels findings of the last export (Scene properties)."""
+
+    bl_label = "cleanmodels"
+    bl_space_type = 'PROPERTIES'
+    bl_region_type = 'WINDOW'
+    bl_context = 'scene'
+
+    @classmethod
+    def poll(cls, context):
+        return len(context.scene.nvb_cm_findings) > 0
+
+    def draw(self, context):
+        scene = context.scene
+        layout = self.layout
+        layout.template_list("NVB_UL_cmfindings", "", scene, "nvb_cm_findings",
+                             scene, "nvb_cm_findings_index", rows=6)
+        if 0 <= scene.nvb_cm_findings_index < len(scene.nvb_cm_findings):
+            item = scene.nvb_cm_findings[scene.nvb_cm_findings_index]
+            box = layout.box()
+            col = box.column(align=True)
+            col.label(text="{} ({})".format(item.check, item.severity))
+            # wrap the message over several lines
+            words, line = item.message.split(), ""
+            for w in words:
+                if len(line) + len(w) > 70:
+                    col.label(text=line)
+                    line = ""
+                line += w + " "
+            if line:
+                col.label(text=line)
+        layout.operator("nvb.cm_clear_findings", icon='X')

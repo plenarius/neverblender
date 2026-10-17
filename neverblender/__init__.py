@@ -97,6 +97,11 @@ bl_info = {
 neverblender_classes = (
     nvb_props.NVB_addon_properties,
 
+    nvb_props.NVB_PG_cmfinding,
+    nvb_ops.NVB_OT_cm_select_node,
+    nvb_ops.NVB_OT_cm_clear_findings,
+    nvb_ui.NVB_UL_cmfindings,
+    nvb_ui.NVB_PT_cleanmodels,
     nvb_props.NVB_PG_set_element,
     nvb_props.NVB_PG_animevent,
     nvb_props.NVB_PG_amt_event,
@@ -227,6 +232,9 @@ def register():
         bpy.props.PointerProperty(type=nvb_props.NVB_PG_emitter)
     bpy.types.Bone.nvb = \
         bpy.props.PointerProperty(type=nvb_props.NVB_PG_bone)
+    bpy.types.Scene.nvb_cm_findings = \
+        bpy.props.CollectionProperty(type=nvb_props.NVB_PG_cmfinding)
+    bpy.types.Scene.nvb_cm_findings_index = bpy.props.IntProperty()
 
     bpy.types.TOPBAR_MT_file_import.append(menu_func_import)
     bpy.types.TOPBAR_MT_file_export.append(menu_func_export)
@@ -248,6 +256,8 @@ def unregister():
     for cl in reversed(neverblender_classes):
         bpy.utils.unregister_class(cl)
 
+    del bpy.types.Scene.nvb_cm_findings_index
+    del bpy.types.Scene.nvb_cm_findings
     del bpy.types.Object.nvb
     del bpy.types.Material.nvb
     del bpy.types.Light.nvb

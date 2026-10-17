@@ -6,6 +6,7 @@ import platform
 from . import bpy
 from . import nvb_def
 from . import nvb_utils
+from . import nvb_cleanmodels
 
 
 def NVB_psb_anim_target_poll(self, object):
@@ -152,6 +153,25 @@ class NVB_addon_properties(bpy.types.AddonPreferences):
     import_ignore_mdl_ambient_color: bpy.props.BoolProperty(
         name="Ignore ambient color", default=True,
         description="Ignore ambient color MDL parameter when importing")
+    # cleanmodels (optional; see nvb_cleanmodels)
+    cleanmodels_path: bpy.props.StringProperty(
+        name="cleanmodels", default="",
+        description="Path to the cleanmodels command line tool (4.5.1 or later). "
+                    "Leave empty to look for it on the PATH",
+        subtype='FILE_PATH',
+        options=set())
+    cleanmodels_import: bpy.props.BoolProperty(
+        name="Import through cleanmodels", default=True,
+        description="When cleanmodels is found, use it to read models: binary models are decompiled "
+                    "(skinned body parts get their bone names from the skeleton) and ASCII models are "
+                    "rewritten in canonical form first")
+    cleanmodels_game_dir: bpy.props.StringProperty(
+        name="Game folder", default="",
+        description="NWN install folder for cleanmodels (stock supermodels, skeletons and materials). "
+                    "Leave empty to let cleanmodels find it",
+        subtype='DIR_PATH',
+        options=set())
+
     import_compiler_use: bpy.props.BoolProperty(
         name="External Decompiler", default=False,
         description="Use external program for decompiling binary models")
@@ -345,6 +365,17 @@ class NVB_addon_properties(bpy.types.AddonPreferences):
         box.label(text='Dummy Settings')
         box.prop(self, 'dummy_type', text="Type")
         box.prop(self, 'dummy_size', text="Size")
+
+        box = col.box()
+        box.label(text='cleanmodels')
+        cm_path, cm_version = nvb_cleanmodels.find_from_prefs(self)
+        if cm_path:
+            box.label(text='Found v{}.{}.{}: {}'.format(*cm_version, cm_path), icon='CHECKMARK')
+        else:
+            box.label(text='Not found (4.5.1 or later); Neverblender works without it', icon='INFO')
+        box.prop(self, 'cleanmodels_path', text="Path")
+        box.prop(self, 'cleanmodels_game_dir', text="Game folder")
+        box.prop(self, 'cleanmodels_import')
 
         box = col.box()
         box.prop(self, 'import_compiler_use')
@@ -1271,3 +1302,13 @@ class NVB_PG_object(bpy.types.PropertyGroup):
                        (nvb_def.Lighttype.MAIN2,
                         'Mainlight 2', 'For tiles (Editable in toolset)', 2)],
                 default=nvb_def.Lighttype.DEFAULT, options=set())
+
+
+class NVB_PG_cmfinding(bpy.types.PropertyGroup):
+    """One cleanmodels finding from the last export."""
+    file: bpy.props.StringProperty()
+    check: bpy.props.StringProperty()
+    node: bpy.props.StringProperty()
+    severity: bpy.props.StringProperty()
+    message: bpy.props.StringProperty()
+

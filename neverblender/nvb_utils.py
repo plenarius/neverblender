@@ -1450,3 +1450,15 @@ def mesh_stored_smoothgroups(mesh):
     attr.data.foreach_get('value', groups)
     return groups
 
+
+def store_cleanmodels_findings(scene, findings):
+    """Replace the scene's cleanmodels findings (shown in Scene properties)."""
+    coll = scene.nvb_cm_findings
+    coll.clear()
+    order = {"fatal": 0, "error": 1, "warning": 2, "info": 3}
+    for f in sorted(findings, key=lambda f: (order.get(f.get("severity"), 4), f.get("file", ""))):
+        item = coll.add()
+        for key in ("file", "check", "node", "severity", "message"):
+            setattr(item, key, str(f.get(key, "")))
+    return len(coll)
+

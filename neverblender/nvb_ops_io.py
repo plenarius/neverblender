@@ -12,6 +12,7 @@ from . import nvb_mdl
 from . import nvb_mtr
 from . import nvb_def
 from . import nvb_utils
+from . import nvb_cleanmodels
 
 
 class NVB_OT_mdlexport(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
@@ -46,6 +47,14 @@ class NVB_OT_mdlexport(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
     export_tangents: bpy.props.BoolProperty(
             name='Export Tangents',
             description='Add tangents to MDL',
+            default=False)
+    cleanmodels_check: bpy.props.BoolProperty(
+            name='Check with cleanmodels',
+            description='Run cleanmodels checks on the exported models and list the findings (Scene properties)',
+            default=True)
+    cleanmodels_compile: bpy.props.BoolProperty(
+            name='Compile with cleanmodels',
+            description='Write game-ready binary models instead of ASCII (walkmeshes stay ASCII)',
             default=False)
     export_smoothing_mode: bpy.props.EnumProperty(
             name='Smoothing',
@@ -161,6 +170,7 @@ class NVB_OT_mdlexport(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
             nvb_mdl.Mdl.generate_ascii(mdl_base, ascii_lines, options)
             with open(os.fsencode(options.filepath), 'w', newline='\r\n') as f:
                 f.write('\n'.join(ascii_lines))
+            self.cleanmodels_after_export(options)
             # Export walkmesh for MDL
             if options.geom_walkmesh:
                 wkm_type = get_walkmeshtype(mdl_base)
@@ -181,9 +191,31 @@ class NVB_OT_mdlexport(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
                 f.write('\n'.join(ascii_lines))
         return {'FINISHED'}
 
+    def cleanmodels_after_export(self, options):
+        """Check and/or compile the model just written, if cleanmodels is used."""
+        cm = options.cleanmodels_path
+        if not cm:
+            return
+        if options.cleanmodels_check:
+            options.cleanmodels_findings.extend(
+                nvb_cleanmodels.check(cm, options.filepath, options.cleanmodels_game_dir))
+        if options.cleanmodels_compile:
+            ok, msgs = nvb_cleanmodels.compile_to(cm, options.filepath, options.filepath,
+                                                  options.cleanmodels_game_dir)
+            if not ok:
+                options.cleanmodels_findings.append(dict(
+                    file=options.filepath, check="compile", node="", severity="error",
+                    message="Compile failed, the ASCII model was kept: " + " | ".join(msgs)[:500]))
+
     def draw(self, context):
         """Draw the export UI."""
         layout = self.layout
+        addon_prefs = context.preferences.addons[__package__].preferences
+        if nvb_cleanmodels.find_from_prefs(addon_prefs)[0]:
+            box = layout.box()
+            box.label(text='cleanmodels')
+            box.prop(self, 'cleanmodels_check')
+            box.prop(self, 'cleanmodels_compile')
         # Misc Export Settings
         box = layout.box()
         box.prop(self, 'export_animations')
@@ -245,7 +277,21 @@ class NVB_OT_mdlexport(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
         options.apply_modifiers = self.apply_modifiers
         options.strip_trailing = self.strip_trailing
         options.batch_mode = self.batch_mode
-        return self.mdl_export(context, options)
+        # cleanmodels (optional)
+        cm_path, _ = nvb_cleanmodels.find_from_prefs(addon_prefs)
+        if cm_path and (self.cleanmodels_check or self.cleanmodels_compile):
+            options.cleanmodels_path = cm_path
+            options.cleanmodels_game_dir = bpy.path.abspath(addon_prefs.cleanmodels_game_dir)
+            options.cleanmodels_check = self.cleanmodels_check
+            options.cleanmodels_compile = self.cleanmodels_compile
+        result = self.mdl_export(context, options)
+        if options.cleanmodels_path:
+            n = nvb_utils.store_cleanmodels_findings(context.scene, options.cleanmodels_findings)
+            worst = {f["severity"] for f in options.cleanmodels_findings}
+            level = {'ERROR'} if worst & {"error", "fatal"} else {'WARNING'} if "warning" in worst else {'INFO'}
+            done = "compiled" if options.cleanmodels_compile else "checked"
+            self.report(level, "cleanmodels {}: {} finding(s), see Scene properties > cleanmodels".format(done, n))
+        return result
 
     def invoke(self, context, event):
         wm = context.window_manager
@@ -477,6 +523,9 @@ class NVB_OT_mdlimport(bpy.types.Operator, bpy_extras.io_utils.ImportHelper):
         options.compiler_use = addon_prefs.import_compiler_use
         options.compiler_path = addon_prefs.import_compiler_path
         options.compiler_command = addon_prefs.import_compiler_command
+        if addon_prefs.cleanmodels_import:
+            options.cleanmodels_path, _ = nvb_cleanmodels.find_from_prefs(addon_prefs)
+            options.cleanmodels_game_dir = bpy.path.abspath(addon_prefs.cleanmodels_game_dir)
         # Geometry options
         options.geom_import = self.import_geometry
         options.geom_walkmesh = self.import_walkmesh
@@ -591,6 +640,9 @@ class NVB_OT_mdl_superimport(bpy.types.Operator, bpy_extras.io_utils.ImportHelpe
         options.compiler_use = addon_prefs.import_compiler_use
         options.compiler_path = addon_prefs.import_compiler_path
         options.compiler_command = addon_prefs.import_compiler_command
+        if addon_prefs.cleanmodels_import:
+            options.cleanmodels_path, _ = nvb_cleanmodels.find_from_prefs(addon_prefs)
+            options.cleanmodels_game_dir = bpy.path.abspath(addon_prefs.cleanmodels_game_dir)
         # Animations (duh)
         options.anim_import = True
         options.anim_fps_use = self.anim_fps_use

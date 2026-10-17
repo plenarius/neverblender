@@ -495,3 +495,40 @@ class NVB_OT_util_transform(bpy.types.Operator):
             context.evaluated_depsgraph_get().update()
             return {'FINISHED'}
 
+
+
+class NVB_OT_cm_select_node(bpy.types.Operator):
+    """Select the object for a cleanmodels finding."""
+
+    bl_idname = "nvb.cm_select_node"
+    bl_label = "Select Node"
+    bl_options = {'UNDO'}
+
+    node: bpy.props.StringProperty()
+
+    def execute(self, context):
+        name = self.node.lower()
+        # Exact name first, then a Blender duplicate such as "node.001"
+        matches = [o for o in context.view_layer.objects if o.name.lower() == name]
+        matches = matches or [o for o in context.view_layer.objects
+                              if o.name.lower().rsplit(".", 1)[0] == name]
+        if not matches:
+            self.report({'WARNING'}, "No object named " + self.node)
+            return {'CANCELLED'}
+        for o in context.view_layer.objects:
+            o.select_set(False)
+        for o in matches:
+            o.select_set(True)
+        context.view_layer.objects.active = matches[0]
+        return {'FINISHED'}
+
+
+class NVB_OT_cm_clear_findings(bpy.types.Operator):
+    """Clear the cleanmodels findings list."""
+
+    bl_idname = "nvb.cm_clear_findings"
+    bl_label = "Clear findings"
+
+    def execute(self, context):
+        context.scene.nvb_cm_findings.clear()
+        return {'FINISHED'}
