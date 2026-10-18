@@ -1223,8 +1223,19 @@ class NVB_PT_cm_variants(bpy.types.Panel):
         if not cm_path:
             layout.label(text=error, icon='INFO')
             return
+
+        # Resources: used by every list and by Make Variants
+        box = layout.box()
+        box.label(text="Resources (custom bodies, 2da tables)")
+        row = box.row()
+        row.template_list("NVB_UL_cm_resources", "", settings, "resources",
+                          settings, "resources_index", rows=2)
+        col = row.column(align=True)
+        col.operator("nvb.cm_resource_add", icon='ADD', text="")
+        col.operator("nvb.cm_resource_remove", icon='REMOVE', text="")
+
         if not mdl_base:
-            layout.label(text="Select a robe, cloak or armour part", icon='INFO')
+            layout.label(text="Select a robe, cloak or armour part to make variants", icon='INFO')
             return
         layout.label(text="Model: " + mdl_base.name, icon='OUTLINER_OB_ARMATURE')
 
@@ -1265,7 +1276,6 @@ class NVB_PT_cm_variants(bpy.types.Panel):
         box = layout.box()
         box.label(text="Output")
         box.prop(settings, "output_dir")
-        box.prop(settings, "resource_dir")
         row = box.row()
         row.prop(settings, "compile_binary")
         row.prop(settings, "overwrite")
@@ -1274,3 +1284,72 @@ class NVB_PT_cm_variants(bpy.types.Panel):
         layout.operator("nvb.cm_variants", icon='MOD_CLOTH')
         if settings.last_result:
             layout.label(text=settings.last_result, icon='INFO')
+
+
+class NVB_UL_cm_resources(bpy.types.UIList):
+    """Folders and haks cleanmodels searches."""
+
+    def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):
+        row = layout.row(align=True)
+        row.prop(item, "use", text="")
+        row.prop(item, "path", text="")
+
+
+class NVB_UL_cm_all_bodies(bpy.types.UIList):
+    """Every body in the game install and the resources."""
+
+    def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):
+        split = layout.split(factor=0.12)
+        split.label(text=item.name, icon='FILE_NEW' if item.custom else 'NONE')
+        split = split.split(factor=0.2)
+        split.label(text=item.race)
+        split = split.split(factor=0.3)
+        split.label(text="{} {}".format(item.phenotype, item.phenotype_name).strip())
+        split = split.split(factor=0.15)
+        split.label(text="{} parts".format(item.parts))
+        split.label(text=item.notes)
+
+    def filter_items(self, context, data, propname):
+        """Search by prefix, race or phenotype name; keep the list's order."""
+        items = getattr(data, propname)
+        flags = [self.bitflag_filter_item] * len(items)
+        if self.filter_name:
+            needle = self.filter_name.lower()
+            flags = [self.bitflag_filter_item if needle in " ".join(
+                (b.name, b.race, b.phenotype_name, str(b.phenotype), "custom" if b.custom else "")).lower()
+                else 0 for b in items]
+        if self.use_filter_invert:
+            flags = [self.bitflag_filter_item & ~f for f in flags]
+        return flags, []
+
+
+class NVB_PT_cm_all_bodies(bpy.types.Panel):
+    """Every body cleanmodels finds in the game install and the resources."""
+
+    bl_label = "All Bodies"
+    bl_space_type = 'PROPERTIES'
+    bl_region_type = 'WINDOW'
+    bl_context = 'scene'
+    bl_parent_id = 'NVB_PT_cm_variants'
+    bl_options = {'DEFAULT_CLOSED'}
+
+    @classmethod
+    def poll(cls, context):
+        return nvb_ops_variants.get_cleanmodels(context)[0] is not None
+
+    def draw(self, context):
+        layout = self.layout
+        settings = context.scene.nvb_cm_variants
+        row = layout.row()
+        if settings.all_bodies:
+            custom = sum(1 for b in settings.all_bodies if b.custom)
+            text = "{} bodies".format(len(settings.all_bodies))
+            if custom:
+                text += ", {} only in the resources".format(custom)
+            row.label(text=text)
+        else:
+            row.label(text="Bodies in the game install and the resources")
+        row.operator("nvb.cm_all_bodies", icon='FILE_REFRESH')
+        if settings.all_bodies:
+            layout.template_list("NVB_UL_cm_all_bodies", "", settings, "all_bodies",
+                                 settings, "all_bodies_index", rows=10)
