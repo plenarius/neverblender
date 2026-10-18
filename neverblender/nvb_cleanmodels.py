@@ -22,6 +22,7 @@ import tempfile
 
 MIN_VERSION = (4, 5, 1)
 VARIANTS_VERSION = (4, 7, 0)
+DRY_RUN_VERSION = (4, 8, 0)  # variants --dry-run; learnedFrom and adjusts
 _TIMEOUT = 300  # seconds per call; whole folders of models take a few seconds
 _VERSION_RE = re.compile(r"cleanmodels v(\d+)\.(\d+)\.(\d+)")
 _cache = {}  # path -> (mtime, version tuple or None)
@@ -194,13 +195,9 @@ def _strip_prefix(text, mdl_path):
     return text
 
 
-def start_variants(path, mdl_path, out_dir, bodies=(), width=1.0, length=1.0, shape="",
-                   compile_binary=False, overwrite=False, preview_dir="",
-                   game_dir="", resource_dir=""):
-    """Start cleanmodels variants and return the process. Its stdout is NDJSON:
-    one "source" event, then "start" and "done" per variant (done carries
-    output, and preview/body when preview_dir is given), then "summary"."""
-    args = ["variants", "--json-lines"] + _resource_args(game_dir, resource_dir)
+def _variants_args(bodies=(), width=1.0, length=1.0, shape="", compile_binary=False,
+                   overwrite=False, game_dir="", resource_dir=""):
+    args = _resource_args(game_dir, resource_dir)
     if bodies:
         args += ["--to", ",".join(bodies)]
     if abs(width - 1.0) > 1e-6:
@@ -213,7 +210,37 @@ def start_variants(path, mdl_path, out_dir, bodies=(), width=1.0, length=1.0, sh
         args.append("--compile")
     if overwrite:
         args.append("--overwrite")
+    return args
+
+
+def start_variants(path, mdl_path, out_dir, bodies=(), width=1.0, length=1.0, shape="",
+                   compile_binary=False, overwrite=False, preview_dir="",
+                   game_dir="", resource_dir=""):
+    """Start cleanmodels variants and return the process. Its stdout is NDJSON:
+    one "source" event, then "start" and "done" per variant (done carries
+    output, and preview/body when preview_dir is given; from 4.8.0 also
+    learnedFrom and adjusts), "error" for a variant that was not made, then
+    "summary"."""
+    args = ["variants", "--json-lines"] + _variants_args(
+        bodies, width, length, shape, compile_binary, overwrite, game_dir, resource_dir)
     if preview_dir:
         args += ["--preview-dir", preview_dir]
     return subprocess.Popen([path] + args + [mdl_path, out_dir], stdout=subprocess.PIPE,
                             stderr=subprocess.PIPE, text=True)
+
+
+def dry_run(path, mdl_path, out_dir, overwrite=False, game_dir="", resource_dir=""):
+    """cleanmodels variants --dry-run (4.8.0 or later). Returns (variants, error):
+    per variant a dict with target, file, action ("write", "replace" or
+    "skip", with the reason in reason), adjusts (the fit settings that change it) and
+    learnedFrom (existing pairs its fit was learned from; absent when measured)."""
+    args = ["variants", "--dry-run", "--json"] + _variants_args(
+        overwrite=overwrite, game_dir=game_dir, resource_dir=resource_dir)
+    try:
+        result = _run(path, args + [mdl_path, out_dir])
+    except (OSError, subprocess.SubprocessError) as e:
+        return None, str(e)
+    try:
+        return json.loads(result.stdout), ""
+    except ValueError:
+        return None, _strip_prefix(result.stderr or result.stdout, mdl_path)

@@ -51,6 +51,20 @@ def get_cleanmodels(context):
     return path, ""
 
 
+def has_dry_run(cm_path):
+    """Whether this cleanmodels has variants --dry-run, learnedFrom and adjusts."""
+    version = nvb_cleanmodels.version_of(cm_path)
+    return bool(version) and version >= nvb_cleanmodels.DRY_RUN_VERSION
+
+
+def active_adjusts(settings):
+    """The fit settings that change at least one chosen variant, or None if unknown."""
+    chosen = [b for b in settings.bodies if b.use and b.learned_from >= 0]
+    if not chosen:
+        return None
+    return {a for b in chosen for a in b.adjusts.split(",") if a}
+
+
 def resource_args(context):
     """(game_dir, resource_dir) for cleanmodels."""
     addon_prefs = context.preferences.addons[__package__].preferences
@@ -69,8 +83,12 @@ def export_model(context, mdl_base, folder):
     return filepath
 
 
-def fill_body_list(settings, mdl_name, bodies):
-    """Fill the body list, keeping the choices made for the same model."""
+def fill_body_list(settings, mdl_name, bodies, plan=None):
+    """Fill the body list, keeping the choices made for the same model.
+
+    plan: the dry run's variants (cleanmodels 4.8.0 or later), or None.
+    """
+    plan = {v.get("target"): v for v in plan or []}
     keep = {}
     if settings.bodies_model == mdl_name:
         keep = {b.name: b.use for b in settings.bodies}
@@ -85,6 +103,11 @@ def fill_body_list(settings, mdl_name, bodies):
         item.phenotype_name = body.get("phenotypeName", "")
         item.same_shape = body.get("sameShape", "")
         item.use = keep.get(item.name, True)
+        variant = plan.get(item.name)
+        if variant:
+            item.learned_from = variant.get("learnedFrom", 0)
+            item.exists = variant.get("action") in ("replace", "skip")
+            item.adjusts = ",".join(variant.get("adjusts") or [])
     settings.bodies_model = mdl_name
     settings.bodies_index = 0
 
@@ -107,17 +130,29 @@ class NVB_OT_cm_variants_bodies(bpy.types.Operator):
             return {'CANCELLED'}
         mdl_base = get_model(context)
         tmp_dir = tempfile.mkdtemp(prefix="nvb_variants_")
+        settings = context.scene.nvb_cm_variants
+        plan = None
         try:
             mdl_path = export_model(context, mdl_base, tmp_dir)
             bodies, error = nvb_cleanmodels.list_bodies(cm_path, mdl_path, *resource_args(context))
+            if bodies is not None and has_dry_run(cm_path):
+                # How each variant would be fitted, and which files exist
+                out_dir = bpy.path.abspath(settings.output_dir)
+                if not out_dir or out_dir.startswith("//"):
+                    out_dir = os.path.join(tmp_dir, "out")  # nothing exists there
+                plan, _ = nvb_cleanmodels.dry_run(cm_path, mdl_path, out_dir, settings.overwrite,
+                                                  *resource_args(context))
         finally:
             shutil.rmtree(tmp_dir, ignore_errors=True)
         if bodies is None:
             self.report({'ERROR'}, error)
             return {'CANCELLED'}
-        settings = context.scene.nvb_cm_variants
-        fill_body_list(settings, mdl_base.name, bodies)
-        self.report({'INFO'}, "{}: {} bodies".format(mdl_base.name, len(settings.bodies)))
+        fill_body_list(settings, mdl_base.name, bodies, plan)
+        msg = "{}: {} bodies".format(mdl_base.name, len(settings.bodies))
+        existing = sum(1 for b in settings.bodies if b.exists)
+        if existing:
+            msg += ", {} already in the output folder".format(existing)
+        self.report({'INFO'}, msg)
         return {'FINISHED'}
 
 
@@ -269,15 +304,26 @@ class NVB_OT_cm_variants(bpy.types.Operator):
             if not written and (returncode != 0 or errors):
                 msg = errors[0] if errors else self.stderr[-1] if self.stderr else \
                     "cleanmodels failed ({})".format(returncode)
-                self.report({'ERROR'}, "{}{}".format(summary + ": " if summary else "",
-                                                     msg.replace("cleanmodels: ", "", 1)))
+                msg = "{}{}".format(summary + ": " if summary else "", msg.replace("cleanmodels: ", "", 1))
+                context.scene.nvb_cm_variants.last_result = msg
+                self.report({'ERROR'}, msg)
                 return {'CANCELLED'}
             if context.scene.nvb_cm_variants.previews:
                 self.import_previews(context)
+            done = [ev for ev in self.events if ev.get("type") == "done" and ev.get("output")]
+            if any("adjusts" in ev for ev in done):  # cleanmodels 4.8.0 or later
+                learned = sum(1 for ev in done if ev.get("learnedFrom"))
+                measured = len(done) - learned
+                how = ["{} learned from existing pairs".format(learned)] if learned else []
+                how += ["{} measured".format(measured)] if measured and learned else []
+                if how:
+                    summary += " ({})".format(", ".join(how))
             if errors:
-                self.report({'WARNING'}, "{}; {}".format(summary, errors[0]))
+                msg, level = "{}; {}".format(summary, errors[0]), 'WARNING'
             else:
-                self.report({'INFO'}, "{} in {}".format(summary, self.out_dir))
+                msg, level = "{} in {}".format(summary, self.out_dir), 'INFO'
+            context.scene.nvb_cm_variants.last_result = msg
+            self.report({level}, msg)
             return {'FINISHED'}
         finally:
             self.cleanup(context)

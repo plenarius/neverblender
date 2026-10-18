@@ -1189,11 +1189,21 @@ class NVB_UL_cm_bodies(bpy.types.UIList):
     """Bodies cleanmodels can make variants for."""
 
     def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):
-        row = layout.row(align=True)
+        # Fixed columns: body, same shape, fit, existing file
+        split = layout.split(factor=0.45)
+        row = split.row(align=True)
         row.prop(item, "use", text="")
         row.label(text="{}  {} {}".format(item.name, item.race, item.phenotype_name))
-        if item.same_shape:
-            row.label(text="= " + item.same_shape)
+        split = split.split(factor=0.3)
+        split.label(text="= " + item.same_shape if item.same_shape else "")
+        split = split.split(factor=0.55)
+        if item.learned_from > 0:
+            split.label(text="learned ({})".format(item.learned_from))
+        elif item.learned_from == 0:
+            split.label(text="measured")
+        else:
+            split.label(text="")
+        split.label(text="exists" if item.exists else "", icon='FILE_TICK' if item.exists else 'NONE')
 
 
 class NVB_PT_cm_variants(bpy.types.Panel):
@@ -1235,12 +1245,21 @@ class NVB_PT_cm_variants(bpy.types.Panel):
         # Fit
         box = layout.box()
         box.label(text="Fit")
+        # Settings that change none of the chosen variants are greyed out (cleanmodels 4.8.0+)
+        adjusts = nvb_ops_variants.active_adjusts(settings) \
+            if settings.bodies_model == mdl_base.name else None
         row = box.row(align=True)
-        row.prop(settings, "width")
-        row.prop(settings, "length")
+        for name in ("width", "length"):
+            sub = row.row(align=True)
+            sub.active = adjusts is None or name in adjusts
+            sub.prop(settings, name)
         col = box.column(align=True)
         for region in ("shoulders", "chest", "waist", "hips", "hem"):
-            col.prop(settings, region)
+            sub = col.row(align=True)
+            sub.active = adjusts is None or region in adjusts
+            sub.prop(settings, region)
+        if adjusts is not None and len(adjusts) < 7:
+            box.label(text="Greyed out: no effect on the chosen variants", icon='INFO')
 
         # Output
         box = layout.box()
@@ -1253,3 +1272,5 @@ class NVB_PT_cm_variants(bpy.types.Panel):
         box.prop(settings, "previews")
 
         layout.operator("nvb.cm_variants", icon='MOD_CLOTH')
+        if settings.last_result:
+            layout.label(text=settings.last_result, icon='INFO')
