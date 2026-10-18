@@ -720,7 +720,7 @@ def str2bool(s):
         try:
             b = (s.lower() == "true")
         except AttributeError:
-            b = false
+            b = False
     return b
 
 

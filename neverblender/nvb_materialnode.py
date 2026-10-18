@@ -171,11 +171,23 @@ class Materialnode(object):
         return texture_list
 
     @staticmethod
+    def get_mtr_float(material, name, fail_value=0.0):
+        """Return a float parameter copied from the material's MTR file."""
+        for param in material.nvb.mtr.param_list:
+            if param.pname.lower() == name.lower():
+                try:
+                    return float(param.pvalue.split()[0])
+                except (ValueError, IndexError):
+                    break
+        return fail_value
+
+    @staticmethod
     def add_node_data_bsdf(material, output_label, texture_list, options):
         """Setup up material nodes for Principled BSDF Shader."""
         # Cache because lazy
         nodes = material.node_tree.nodes
         links = material.node_tree.links
+        mtr_displacement_offset = Materialnode.get_mtr_float(material, 'DisplacementOffset')
 
         # Create an output and shaders
         node_out = nodes.new('ShaderNodeOutputMaterial')
@@ -353,7 +365,7 @@ class Materialnode(object):
                 node_displ_offset.operation = 'ADD'
                 node_displ_offset.use_clamp = True
                 node_displ_offset.inputs[0].default_value = 0.0
-                if False:  # TODO: read displacement offset
+                if mtr_displacement_offset:
                     node_displ_offset.inputs[0].default_value = mtr_displacement_offset
                 node_displ_offset.inputs[1].default_value = 0.0
 
@@ -434,6 +446,7 @@ class Materialnode(object):
         # Cache because lazy
         nodes = material.node_tree.nodes
         links = material.node_tree.links
+        mtr_displacement_offset = Materialnode.get_mtr_float(material, 'DisplacementOffset')
 
         # Create an output and shaders
         node_out = nodes.new('ShaderNodeOutputMaterial')
