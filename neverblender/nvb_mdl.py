@@ -310,27 +310,13 @@ class Mdl():
     def parse_wkm(self, wkm_filepath, wkm_type, options):
         """Parse a single walkmesh file."""
         if Mdl.is_binary(wkm_filepath):
-            # Binary modles have to be decompiled
-            if not options.decompiler_use_external:
-                print("Neverblender: WARNING - Detected binary MDL with no decompiler avaible.")
-            else:
-                # Write the output of the external decompiler to a temp file and feed it into the ascii parser
-                # We need to prevent auto-deletion and delete manually ourselves,
-                # (on Windows access to the tempfile will be blocked after running the decompiler)
-                tf = tempfile.NamedTemporaryFile(mode="r+", delete=False)
-                try:
-                    run_cmd = Mdl.build_external_decompile_cmd(wkm_filepath, tf.name, options)
-                    result = subprocess.run(run_cmd, stdout=subprocess.PIPE)
-                    if result.returncode == 0:
-                        self.read_ascii_mdl(tf.read(), options)
-                    else:
-                        print("Neverblender: ERROR - Could not decompile file.")
-                finally:
-                    tf.close()
-                    os.remove(tf.name)
+            # NWN walkmeshes are always ASCII
+            text = "{}: not an ASCII walkmesh, skipped".format(os.path.basename(wkm_filepath))
+            print("Neverblender: WARNING - " + text)
+            options.warnings.append(text)
         else:
             # ASCII model, parse directly
-            with open(os.fsencode(wkm_filepath), 'r') as f:
+            with open(os.fsencode(wkm_filepath), 'r', encoding="latin-1") as f:
                 self.read_ascii_wkm(f.read(), wkm_type, options)
 
     @staticmethod

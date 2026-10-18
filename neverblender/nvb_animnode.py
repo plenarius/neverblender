@@ -369,9 +369,14 @@ class Animnode():
         animation (a single sample spans all of it)."""
         fps = options.scene.render.fps
         frames = [f for f, _ in Animnode.get_shape_samples(obj, anim)]
-        if len(frames) >= 2:
-            return (frames[1] - frames[0]) / fps
         period = obj.data.get(Animnode.sampleperiod_prop(anim))
+        if len(frames) >= 2:
+            keyed = (frames[1] - frames[0]) / fps
+            # Keyframe times are single precision: write the imported
+            # period back exactly unless the keys were moved
+            if period and abs(keyed - period) <= 1e-4 * period:
+                return period
+            return keyed
         if period:
             return period
         anim_length = (anim.frameEnd - anim.frameStart) / fps
