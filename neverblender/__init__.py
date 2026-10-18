@@ -180,6 +180,7 @@ neverblender_classes = (
 
     nvb_ui.NVB_PT_aurorabase,
     nvb_ui.NVB_PT_dummy,
+    nvb_ui.NVB_PT_bone,
     nvb_ui.NVB_PT_armature,
     nvb_ui.NVB_PT_amt_events,
     nvb_ui.NVB_PT_set,
