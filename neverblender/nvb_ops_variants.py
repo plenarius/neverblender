@@ -3,9 +3,9 @@
 The model is exported to a temporary folder and handed to
 `cleanmodels variants`, which fits it to every other race and phenotype of
 its gender (or the bodies picked in the list). With "Show on Bodies", each
-variant is imported on its body into a Variants collection, one row per race
-and one column per phenotype, so the fit can be checked before the files are
-used.
+variant is imported on its body into a Variants collection, races side by
+side and one row per phenotype, so the fit can be checked before the files
+are used.
 """
 
 import os
@@ -20,8 +20,8 @@ import bpy
 from . import nvb_cleanmodels
 from . import nvb_utils
 
-PREVIEW_SPACING_X = 1.6  # between phenotypes
-PREVIEW_SPACING_Y = 2.5  # between races
+PREVIEW_SPACING_X = 2.0  # between races (custom races can be large)
+PREVIEW_SPACING_Y = 2.5  # between phenotypes
 
 
 PREVIEW_KEY = "nvb_variant_of"  # on preview objects: the name of the model they preview
@@ -66,11 +66,11 @@ def active_adjusts(settings):
 
 
 def resource_args(context):
-    """(game_dir, resource_dir) for cleanmodels."""
+    """(game_dir, resource_dirs) for cleanmodels."""
     addon_prefs = context.preferences.addons[__package__].preferences
     settings = context.scene.nvb_cm_variants
     return (bpy.path.abspath(addon_prefs.cleanmodels_game_dir),
-            bpy.path.abspath(settings.resource_dir))
+            [bpy.path.abspath(r.path) for r in settings.resources if r.use and r.path])
 
 
 def export_model(context, mdl_base, folder):
@@ -210,12 +210,12 @@ class NVB_OT_cm_variants(bpy.types.Operator):
         self._tmp_dir = tempfile.mkdtemp(prefix="nvb_variants_")
         mdl_path = export_model(context, self.mdl_base, self._tmp_dir)
         preview_dir = os.path.join(self._tmp_dir, "preview") if settings.previews else ""
-        game_dir, resource_dir = resource_args(context)
+        game_dir, resource_dirs = resource_args(context)
         try:
             self._process = nvb_cleanmodels.start_variants(
                 cm_path, mdl_path, out_dir, bodies, settings.width, settings.length,
                 settings.shape_arg(), settings.compile_binary, settings.overwrite,
-                preview_dir, game_dir, resource_dir)
+                preview_dir, game_dir, resource_dirs)
         except OSError as e:
             shutil.rmtree(self._tmp_dir, ignore_errors=True)
             return str(e)
@@ -339,7 +339,7 @@ class NVB_OT_cm_variants(bpy.types.Operator):
         shutil.rmtree(self._tmp_dir, ignore_errors=True)
 
     def import_previews(self, context):
-        """Import each variant on its body: one row per race, one column per phenotype."""
+        """Import each variant on its body: races side by side, one row per phenotype."""
         pairs = []  # (body prefix, fit path, body path)
         for ev in self.events:
             if ev.get("type") in ("source", "done") and ev.get("preview") and ev.get("body"):
@@ -359,14 +359,16 @@ class NVB_OT_cm_variants(bpy.types.Operator):
         coll[PREVIEW_KEY] = self.mdl_base.name
         mat_body = preview_material("NVB Variant Body", (0.55, 0.55, 0.6, 1.0))
         mat_fit = preview_material("NVB Variant Fit", (0.75, 0.25, 0.2, 1.0))
-        # Rows by race (pXr#), columns by phenotype (pXX#)
+        # Columns by race (p?r..), rows by phenotype (p??#, can be several digits: pmh15).
+        # Races side by side: the usual choice, several races in one phenotype, stays
+        # visible from the front.
         races = sorted({p[2] for p, _, _ in pairs})
-        phenotypes = sorted({p[3] for p, _, _ in pairs})
+        phenotypes = sorted({int(p[3:]) for p, _, _ in pairs})
         old_materials = set(bpy.data.materials)
         old_images = set(bpy.data.images)
         for prefix, fit_path, body_path in pairs:
-            location = (phenotypes.index(prefix[3]) * PREVIEW_SPACING_X,
-                        -races.index(prefix[2]) * PREVIEW_SPACING_Y, 0.0)
+            location = (races.index(prefix[2]) * PREVIEW_SPACING_X,
+                        -phenotypes.index(int(prefix[3:])) * PREVIEW_SPACING_Y, 0.0)
             for path, mat in ((body_path, mat_body), (fit_path, mat_fit)):
                 before = set(bpy.data.objects)
                 with context.temp_override(collection=coll):
@@ -404,3 +406,88 @@ def preview_material(name, color):
     mat = bpy.data.materials.get(name) or bpy.data.materials.new(name)
     mat.diffuse_color = color
     return mat
+
+
+class NVB_OT_cm_resource_add(bpy.types.Operator):
+    """Add a folder or hak for cleanmodels to search"""
+
+    bl_idname = "nvb.cm_resource_add"
+    bl_label = "Add Resource"
+    bl_options = {'UNDO'}
+
+    def execute(self, context):
+        settings = context.scene.nvb_cm_variants
+        settings.resources.add()
+        settings.resources_index = len(settings.resources) - 1
+        return {'FINISHED'}
+
+
+class NVB_OT_cm_resource_remove(bpy.types.Operator):
+    """Remove the selected folder or hak"""
+
+    bl_idname = "nvb.cm_resource_remove"
+    bl_label = "Remove Resource"
+    bl_options = {'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        settings = context.scene.nvb_cm_variants
+        return 0 <= settings.resources_index < len(settings.resources)
+
+    def execute(self, context):
+        settings = context.scene.nvb_cm_variants
+        settings.resources.remove(settings.resources_index)
+        settings.resources_index = max(0, min(settings.resources_index, len(settings.resources) - 1))
+        return {'FINISHED'}
+
+
+class NVB_OT_cm_all_bodies(bpy.types.Operator):
+    """List every body in the game install and the resources"""
+
+    bl_idname = "nvb.cm_all_bodies"
+    bl_label = "List Bodies"
+    bl_options = {'UNDO'}
+
+    def execute(self, context):
+        cm_path, error = get_cleanmodels(context)
+        if not cm_path:
+            self.report({'ERROR'}, error)
+            return {'CANCELLED'}
+        game_dir, resource_dirs = resource_args(context)
+        bodies, error = nvb_cleanmodels.list_bodies(cm_path, None, game_dir, resource_dirs)
+        if bodies is None:
+            self.report({'ERROR'}, error)
+            return {'CANCELLED'}
+        stock = set()
+        if resource_dirs:  # which bodies only the resources have
+            game_only, _ = nvb_cleanmodels.list_bodies(cm_path, None, game_dir)
+            stock = {b["prefix"] for b in game_only or []}
+        settings = context.scene.nvb_cm_variants
+        settings.all_bodies.clear()
+        for body in bodies:
+            item = settings.all_bodies.add()
+            item.name = body["prefix"]
+            item.gender = body.get("gender", "")
+            item.race = body.get("raceName", body.get("race", ""))
+            item.phenotype = body.get("phenotype", 0)
+            item.phenotype_name = body.get("phenotypeName", "")
+            item.parts = body.get("parts", 0)
+            item.custom = bool(resource_dirs) and item.name not in stock
+            notes = []
+            if body.get("sameShape"):
+                notes.append("same shape as " + body["sameShape"])
+            if body.get("partsFrom", item.name) != item.name:
+                notes.append("base parts from " + body["partsFrom"])
+            if not body.get("skeleton", True):
+                notes.append("no skeleton")
+            kinds = [k for k in ("robe", "cloak") if body.get(k) is False]
+            if kinds:
+                notes.append("no stock " + " or ".join(kinds))
+            item.notes = "; ".join(notes)
+        settings.all_bodies_index = 0
+        custom = sum(1 for b in settings.all_bodies if b.custom)
+        msg = "{} bodies".format(len(settings.all_bodies))
+        if resource_dirs:
+            msg += ", {} only in the resources".format(custom)
+        self.report({'INFO'}, msg)
+        return {'FINISHED'}

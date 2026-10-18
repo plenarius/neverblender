@@ -1341,6 +1341,27 @@ class NVB_PG_cm_body(bpy.types.PropertyGroup):
         description="Comma-separated fit settings that change this variant")
 
 
+class NVB_PG_cm_resource(bpy.types.PropertyGroup):
+    """An extra folder or hak for cleanmodels (bodies, skeletons, 2da tables, materials)."""
+    path: bpy.props.StringProperty(
+        name="Path", subtype='FILE_PATH', default="",
+        description="Folder, or .hak/.erf/.mod, with body parts, supermodels, skeletons, capart.2da, "
+                    "racialtypes.2da/phenotype.2da (names) and materials. Folders are not searched "
+                    "recursively for body parts: add each race's folder or hak")
+    use: bpy.props.BoolProperty(name="Use", default=True)
+
+
+class NVB_PG_cm_any_body(bpy.types.PropertyGroup):
+    """A body in the game install or the resources (name: its prefix, like pmh0)."""
+    gender: bpy.props.StringProperty()
+    race: bpy.props.StringProperty()
+    phenotype: bpy.props.IntProperty()
+    phenotype_name: bpy.props.StringProperty()
+    parts: bpy.props.IntProperty()
+    notes: bpy.props.StringProperty()
+    custom: bpy.props.BoolProperty(description="Only in the resources, not in the game install")
+
+
 class NVB_PG_cm_variants(bpy.types.PropertyGroup):
     """Settings for making variants with cleanmodels (Scene properties)."""
     output_dir: bpy.props.StringProperty(
@@ -1377,10 +1398,10 @@ class NVB_PG_cm_variants(bpy.types.PropertyGroup):
         description="Import each variant on its body into a Variants collection, side by side, to check the fit")
     last_result: bpy.props.StringProperty(
         description="What the last Make Variants did")
-    resource_dir: bpy.props.StringProperty(
-        name="Resources", subtype='FILE_PATH', default="",
-        description="Extra folder, or .hak/.erf/.mod, with supermodels, skeletons, capart.2da and materials "
-                    "(custom bodies are found here)")
+    resources: bpy.props.CollectionProperty(type=NVB_PG_cm_resource)
+    resources_index: bpy.props.IntProperty()
+    all_bodies: bpy.props.CollectionProperty(type=NVB_PG_cm_any_body)
+    all_bodies_index: bpy.props.IntProperty()
 
     def shape_arg(self):
         """The --shape value for the regions that are not 1."""

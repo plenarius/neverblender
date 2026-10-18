@@ -94,12 +94,16 @@ path in the add-on preferences, or anywhere on your `PATH`), it also:
   races and phenotypes of its gender and writes `pmd0_robe003.mdl` and so on
   to the output folder. *Find Bodies* lists the bodies so you can pick some;
   *Fit* loosens, lengthens or reshapes the fit by region; *Show on Bodies*
-  imports each variant on its body into a *Variants* collection, one row per
-  race, to check the fit before using the files. With cleanmodels 4.8.0 or
+  imports each variant on its body into a *Variants* collection, races side
+  by side and one row per phenotype, to check the fit before using the files. With cleanmodels 4.8.0 or
   later, *Find Bodies* also shows how each variant will be fitted (learned
   from the existing race versions of that part, or measured) and which files
   already exist, and greys out the *Fit* settings that would not change the
   chosen variants.
+  Custom bodies come from *Resources*: add each race's hak (or folder) and the
+  hak with `racialtypes.2da` and `phenotype.2da` for their names. *All
+  Bodies* lists every body in the game install and the resources, without
+  selecting a model, and marks the ones only the resources have.
 
 Without cleanmodels, binary models use the built-in decompiler. It names the
 bones of skinned body parts (`pmh0_neck001` and the like) after the part's own
