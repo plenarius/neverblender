@@ -1516,6 +1516,14 @@ def mix_clamp(node):
         node.use_clamp = True
 
 
+def find_ascii_line(ascii_block, keyword):
+    """Index of the first line whose first word is keyword (any case), or -1.
+    A plain find() also hits the word inside other lines: stock tnp_wndw_a01
+    has the comment "#local file: windows_node fixed.max"."""
+    m = re.search(r'^[ \t]*' + keyword + r'[ \t]', ascii_block, re.MULTILINE | re.IGNORECASE)
+    return m.start() if m else -1
+
+
 def split_ascii_nodes(ascii_block):
     """Split the nodes of a geometry or animation block: each starts at a
     line "node <type> <name>". Lines "node" without a type and name (stock

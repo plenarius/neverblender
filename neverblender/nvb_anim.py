@@ -82,7 +82,7 @@ class Animation():
 
     def loadAscii(self, ascii_data):
         """Load an animation from a block from an ascii mdl file."""
-        animNodesStart = ascii_data.find('node ')
+        animNodesStart = nvb_utils.find_ascii_line(ascii_data, 'node')
         if (animNodesStart > -1):
             self.loadAsciiAnimHeader(ascii_data[:animNodesStart-1])
             self.loadAsciiAnimNodes(ascii_data[animNodesStart:])

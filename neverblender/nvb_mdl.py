@@ -87,7 +87,7 @@ class Mdl():
     def read_ascii_wkm(self, ascii_block, wkmtype, options):
         """TODO: DOC."""
         if options.geom_walkmesh:
-            geom_start = ascii_block.find('node ')
+            geom_start = nvb_utils.find_ascii_line(ascii_block, 'node')
             if (geom_start < 0):  # Most likely empty walkmesh file
                 print("Neverblender: WARNING: Unable to read walkmesh data")
                 return
@@ -134,8 +134,8 @@ class Mdl():
 
     def read_ascii_mdl(self, ascii_block, options):
         """Parse an ascii mdl file."""
-        geom_start = ascii_block.find('node ')
-        anim_start = ascii_block.find('newanim ')
+        geom_start = nvb_utils.find_ascii_line(ascii_block, 'node')
+        anim_start = nvb_utils.find_ascii_line(ascii_block, 'newanim')
 
         if (anim_start > 0) and (geom_start > anim_start):
             raise nvb_def.MalformedMdlFile('Animations before geometry')
