@@ -180,7 +180,7 @@ class NVB_OT_mdlexport(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
             # Export MDL
             ascii_lines = []
             nvb_mdl.Mdl.generate_ascii(mdl_base, ascii_lines, options)
-            with open(os.fsencode(options.filepath), 'w', newline='\r\n') as f:
+            with open(os.fsencode(options.filepath), 'w', newline='\r\n', encoding='latin-1', errors='replace') as f:
                 f.write('\n'.join(ascii_lines))
             self.cleanmodels_after_export(options)
             # Export walkmesh for MDL
@@ -192,14 +192,14 @@ class NVB_OT_mdlexport(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
                                                wkm_type, options)
                 if ascii_lines:
                     wkm_path = get_filepath(mdl_path, wkm_name, wkm_ext)
-                    with open(os.fsencode(wkm_path), 'w', newline='\r\n') as f:
+                    with open(os.fsencode(wkm_path), 'w', newline='\r\n', encoding='latin-1', errors='replace') as f:
                         f.write('\n'.join(ascii_lines))
         # Export MTRs
         for mtr_name, blen_mat_name in options.mtr_list:
             blen_mat = bpy.data.materials[blen_mat_name]
             ascii_lines = nvb_mtr.Mtr.generate_ascii(blen_mat, options)
             mtr_path = get_filepath(options.filepath, mtr_name, '.mtr')
-            with open(os.fsencode(mtr_path), 'w', newline='\r\n') as f:
+            with open(os.fsencode(mtr_path), 'w', newline='\r\n', encoding='latin-1', errors='replace') as f:
                 f.write('\n'.join(ascii_lines))
         return {'FINISHED'}
 
@@ -985,7 +985,7 @@ class NVB_OT_phenotype_batch_export(bpy.types.Operator, bpy_extras.io_utils.Expo
         # Export MDL
         ascii_lines = []
         nvb_mdl.Mdl.generate_ascii(mdl_base, ascii_lines, options)
-        with open(os.fsencode(filepath), 'w', newline='\r\n') as f:
+        with open(os.fsencode(filepath), 'w', newline='\r\n', encoding='latin-1', errors='replace') as f:
             f.write('\n'.join(ascii_lines))
 
         # Export walkmesh
@@ -998,7 +998,7 @@ class NVB_OT_phenotype_batch_export(bpy.types.Operator, bpy_extras.io_utils.Expo
             if ascii_lines:
                 wkm_name = os.path.splitext(os.path.basename(filepath))[0]
                 wkm_path = self.get_filepath(filepath, wkm_name, wkm_ext)
-                with open(os.fsencode(wkm_path), 'w', newline='\r\n') as f:
+                with open(os.fsencode(wkm_path), 'w', newline='\r\n', encoding='latin-1', errors='replace') as f:
                     f.write('\n'.join(ascii_lines))
 
     def execute(self, context):
@@ -1394,7 +1394,7 @@ class NVB_OT_setexport(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
                                                  self.grass_density,
                                                  self.grass_height)
 
-        with open(os.fsencode(self.filepath), 'w', newline='\r\n') as f:
+        with open(os.fsencode(self.filepath), 'w', newline='\r\n', encoding='latin-1', errors='replace') as f:
             f.write('\n'.join(ascii_setfile))
 
         return {'FINISHED'}

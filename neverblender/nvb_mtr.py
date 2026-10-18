@@ -69,7 +69,9 @@ class Mtr(object):
         # Generate a name, strip file extension
         self.name = os.path.splitext(os.path.basename(filepath))[0]
         try:
-            mtrFile = open(os.fsencode(filepath), 'r')
+            # Latin-1, as models are read: any byte reads (UTF-8 would fail on
+            # an accented comment)
+            mtrFile = open(os.fsencode(filepath), 'r', encoding='latin-1')
         except IOError:
             return False
         ascii_data = mtrFile.read()
