@@ -73,8 +73,7 @@ class Animation():
 
     def loadAsciiAnimNodes(self, ascii_data):
         """TODO: DOC."""
-        dlm = 'node '
-        node_list = [dlm + s for s in ascii_data.split(dlm) if s != '']
+        node_list = nvb_utils.split_ascii_nodes(ascii_data)
         for idx, ascii_node in enumerate(node_list):
             ascii_lines = [l.strip().split() for l in ascii_node.splitlines()]
             node = nvb_animnode.Animnode()

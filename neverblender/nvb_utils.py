@@ -1514,3 +1514,21 @@ def mix_clamp(node):
         node.clamp_result = True
     else:
         node.use_clamp = True
+
+
+def split_ascii_nodes(ascii_block):
+    """Split the nodes of a geometry or animation block: each starts at a
+    line "node <type> <name>". Lines "node" without a type and name (stock
+    c_quiver has "node pos=[...]", exporter debug output) are skipped, as
+    cleanmodels does; text before the first node is ignored."""
+    blocks = []
+    for line in ascii_block.splitlines():
+        tokens = line.split()
+        if tokens and tokens[0].lower() == 'node':
+            if len(tokens) < 3:
+                print("Neverblender: WARNING - skipped a node line without a type and name: " + line.strip())
+                continue
+            blocks.append([line])
+        elif blocks:
+            blocks[-1].append(line)
+    return ['\n'.join(b) for b in blocks]

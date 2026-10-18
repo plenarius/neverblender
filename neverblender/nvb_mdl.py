@@ -99,8 +99,7 @@ class Mdl():
     @staticmethod
     def read_ascii_geom(ascii_block, nodelist):
         """Read the geometry block of ascii mdl."""
-        dlm = 'node '
-        ascii_node_list = [dlm + b for b in ascii_block.split(dlm) if b]
+        ascii_node_list = nvb_utils.split_ascii_nodes(ascii_block)
         for idx, ascii_node in enumerate(ascii_node_list):
             ascii_lines = [l.strip().split() for l in ascii_node.splitlines()]
             node = None

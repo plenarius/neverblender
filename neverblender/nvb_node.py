@@ -1227,6 +1227,9 @@ class Emitter(Node):
             else:
                 if label in type(self).property_dict:
                     data_path, dim, convert, _ = self.property_dict[label]
+                    if len(line) < dim + 1:
+                        # No value (stock dag_grifflag01: "chunkName"), keep the default
+                        return line
                     if dim > 1:
                         value = tuple(list(map(convert, line[1:dim+1])))
                     else:
