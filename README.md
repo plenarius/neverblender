@@ -95,7 +95,11 @@ path in the add-on preferences, or anywhere on your `PATH`), it also:
   to the output folder. *Find Bodies* lists the bodies so you can pick some;
   *Fit* loosens, lengthens or reshapes the fit by region; *Show on Bodies*
   imports each variant on its body into a *Variants* collection, one row per
-  race, to check the fit before using the files.
+  race, to check the fit before using the files. With cleanmodels 4.8.0 or
+  later, *Find Bodies* also shows how each variant will be fitted (learned
+  from the existing race versions of that part, or measured) and which files
+  already exist, and greys out the *Fit* settings that would not change the
+  chosen variants.
 
 Without cleanmodels, binary models use the built-in decompiler. It names the
 bones of skinned body parts (`pmh0_neck001` and the like) after the part's own

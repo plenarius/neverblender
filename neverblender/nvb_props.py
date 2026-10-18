@@ -1332,6 +1332,13 @@ class NVB_PG_cm_body(bpy.types.PropertyGroup):
     phenotype_name: bpy.props.StringProperty()
     same_shape: bpy.props.StringProperty(
         description="Same shape as this body: the variant is a copy of that one")
+    # From the dry run (cleanmodels 4.8.0 or later)
+    learned_from: bpy.props.IntProperty(
+        default=-1, description="Existing pairs the fit is learned from; 0: measured; -1: unknown")
+    exists: bpy.props.BoolProperty(
+        description="The variant's file is already in the output folder")
+    adjusts: bpy.props.StringProperty(
+        description="Comma-separated fit settings that change this variant")
 
 
 class NVB_PG_cm_variants(bpy.types.PropertyGroup):
@@ -1368,6 +1375,8 @@ class NVB_PG_cm_variants(bpy.types.PropertyGroup):
     previews: bpy.props.BoolProperty(
         name="Show on Bodies", default=True,
         description="Import each variant on its body into a Variants collection, side by side, to check the fit")
+    last_result: bpy.props.StringProperty(
+        description="What the last Make Variants did")
     resource_dir: bpy.props.StringProperty(
         name="Resources", subtype='FILE_PATH', default="",
         description="Extra folder, or .hak/.erf/.mod, with supermodels, skeletons, capart.2da and materials "
