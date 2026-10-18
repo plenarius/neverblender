@@ -23,7 +23,9 @@ import bpy
 from bpy.app.handlers import persistent
 
 CACHE_DIR = os.path.join(os.path.expanduser("~"), ".cache", "nwn-dds")
+CACHE_FORMAT = 2  # 2: rows in the right order (4.3.4)
 SOURCE_KEY = "nwn_dds_source"  # custom property: the .dds an image was converted from
+FORMAT_KEY = "nwn_dds_format"  # custom property: the CACHE_FORMAT it was converted with
 
 
 def _c565(c):
@@ -46,7 +48,11 @@ def nwn_dds_header(path):
 
 
 def decode(data):
-    """Decode the top mip level of an NWN-format DDS to RGBA rows."""
+    """Decode the top mip level of an NWN-format DDS to RGBA rows, top row first.
+
+    NWN stores its DDS rows bottom up (the first row is the bottom of the
+    texture, as in its TGAs), so the decoded rows are reversed.
+    """
     w, h, ch = struct.unpack_from("<III", data, 0)
     dxt5 = ch == 4
     off = 20
@@ -76,6 +82,7 @@ def decode(data):
                     r, g, b = pal[(bits >> (2 * i)) & 3]
                     a = alphas[i] if alphas else 255
                     rows[y][4 * x:4 * x + 4] = bytes((r, g, b, a))
+    rows.reverse()
     return w, h, rows
 
 
@@ -93,7 +100,8 @@ def write_png(path, w, h, rows):
 def cached_png(dds_path):
     """Convert dds_path to a PNG in the cache (once per file version) and return its path."""
     st = os.stat(dds_path)
-    key = hashlib.sha1(f"{os.path.abspath(dds_path)}|{st.st_size}|{st.st_mtime_ns}".encode()).hexdigest()[:16]
+    # CACHE_FORMAT changes when the conversion does, so older PNGs aren't reused
+    key = hashlib.sha1(f"{CACHE_FORMAT}|{os.path.abspath(dds_path)}|{st.st_size}|{st.st_mtime_ns}".encode()).hexdigest()[:16]
     # The PNG keeps the texture's own file name: NeverBlender exports the image
     # file's name as the model's bitmap, so "c_antelope-<hash>.png" would have
     # renamed the bitmap. The version goes in the folder name instead.
@@ -110,13 +118,22 @@ def cached_png(dds_path):
     return png
 
 
+def needs_conversion(img):
+    """An NWN DDS not converted yet, or converted by an older (upside-down) version."""
+    if img.source != "FILE":
+        return False
+    if img.get(SOURCE_KEY):
+        return img.get(FORMAT_KEY, 1) != CACHE_FORMAT
+    return img.filepath.lower().endswith(".dds")
+
+
 def convert_images():
     """Point every image that is an NWN-format DDS at a cached PNG. Returns the count."""
     n = 0
     for img in bpy.data.images:
-        if img.get(SOURCE_KEY) or img.source != "FILE":
+        if not needs_conversion(img):
             continue
-        path = bpy.path.abspath(img.filepath)
+        path = img.get(SOURCE_KEY) or bpy.path.abspath(img.filepath)
         if not path.lower().endswith(".dds") or not nwn_dds_header(path):
             continue
         try:
@@ -125,6 +142,7 @@ def convert_images():
             print(f"NeverBlender DDS: could not convert {path}: {e}")
             continue
         img[SOURCE_KEY] = path
+        img[FORMAT_KEY] = CACHE_FORMAT
         img.filepath = png
         img.reload()
         n += 1
@@ -156,7 +174,7 @@ def _on_update(scene, depsgraph=None):
     global _pending
     if _pending or not is_enabled():
         return
-    if any(i.source == "FILE" and not i.get(SOURCE_KEY) and i.filepath.lower().endswith(".dds") for i in bpy.data.images):
+    if any(needs_conversion(i) for i in bpy.data.images):
         _pending = True
         bpy.app.timers.register(_deferred, first_interval=0.1)
 
