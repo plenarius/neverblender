@@ -178,8 +178,8 @@ class Mtr(object):
                 if len(param_values) > 0:
                     if param_type == "int":  # a single int
                         sv = str(int(param_values[0]))
-                        ascii_lines.append(param_name + " " + sv)
+                        ascii_lines.append("parameter int " + param_name + " " + sv)
                     elif param_type == "float":  # up to 4 floats
                         sv = ' '.join([str(v) for v in param_values[:4]])
-                        ascii_lines.append(param_name + " " + sv)
+                        ascii_lines.append("parameter float " + param_name + " " + sv)
         return ascii_lines
