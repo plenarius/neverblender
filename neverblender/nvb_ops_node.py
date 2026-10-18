@@ -38,15 +38,20 @@ class NVB_OT_util_genwok(bpy.types.Operator):
         face_mats = [0]*len(obj.data.polygons)
         obj.data.polygons.foreach_get('material_index', face_mats)
 
-        # Fix material indices so they match the ones in the wok definition
-        # This will only work if wok materials are at least partially present
+        # Map each material slot to its index in the wok definition. Faces
+        # with any other material (or an empty slot) become wok_NotDefined.
         wok_indices = {wm[0]: wm_idx for wm_idx, wm in
                        enumerate(nvb_def.wok_materials)}
+        slot_to_wok = {}
+        unknown = []
         for ms_idx, ms in enumerate(obj.material_slots):
-            wok_idx = wok_indices[ms.material.name]
-            if wok_idx != ms_idx:
-                face_mats = [-1*wok_idx if f_idx == ms_idx else f_idx for f_idx in face_mats]
-        face_mats = [abs(f_idx) for f_idx in face_mats]
+            name = ms.material.name if ms.material else ""
+            if name in wok_indices:
+                slot_to_wok[ms_idx] = wok_indices[name]
+            else:
+                slot_to_wok[ms_idx] = 0
+                unknown.append(name or "(empty slot)")
+        face_mats = [slot_to_wok.get(f_idx, 0) for f_idx in face_mats]
 
         # Remove all material (slots)
         for _ in range(len(obj.material_slots)):
@@ -61,11 +66,11 @@ class NVB_OT_util_genwok(bpy.types.Operator):
         obj.data.polygons.foreach_set('material_index', face_mats)
         obj.data.update()
 
-        test = [0]*len(obj.data.polygons)
-        obj.data.polygons.foreach_get('material_index', test)
-
         context.view_layer.update()
 
+        if unknown:
+            self.report({'WARNING'}, "Not walkmesh materials, faces set to wok_NotDefined: " +
+                        ", ".join(sorted(set(unknown))))
         return {'FINISHED'}
 
 

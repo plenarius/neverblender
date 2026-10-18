@@ -200,7 +200,9 @@ class NVB_OT_util_minimap(bpy.types.Operator):
             scene.world.color = (0.0, 0.0, 0.0)
         
         if self.render_dir:
-            scene.render.engine = 'BLENDER_EEVEE'
+            # Eevee is BLENDER_EEVEE_NEXT in Blender 4.2 to 4.5, BLENDER_EEVEE otherwise
+            engines = {e.identifier for e in scene.render.bl_rna.properties['engine'].enum_items}
+            scene.render.engine = 'BLENDER_EEVEE_NEXT' if 'BLENDER_EEVEE_NEXT' in engines else 'BLENDER_EEVEE'
             scene.render.film_transparent = self.transparent_background
             scene.render.resolution_y = self.render_resolution
         scene.render.resolution_x = scene.render.resolution_y

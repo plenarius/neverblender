@@ -1371,6 +1371,8 @@ class NVB_PG_cm_variants(bpy.types.PropertyGroup):
     bodies_index: bpy.props.IntProperty()
     bodies_model: bpy.props.StringProperty(
         description="The model the body list was made for")
+    bodies_inputs: bpy.props.StringProperty(
+        description="The output folder and resources the body list was made with")
     width: bpy.props.FloatProperty(
         name="Width", default=1.0, min=0.5, max=2.0, step=1,
         description="Multiply the fit's width across every bone (1.05: 5% looser)")
