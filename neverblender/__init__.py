@@ -42,6 +42,7 @@ from . import nvb_ops_amt
 from . import nvb_ops_node
 from . import nvb_plt
 from . import nvb_plt_autoreload
+from . import nvb_dds
 
 from . import nvb_ui
 
@@ -73,6 +74,7 @@ if 'bpy' in locals():
         importlib.reload(nvb_ops_node)
         importlib.reload(nvb_plt)
         importlib.reload(nvb_plt_autoreload)
+        importlib.reload(nvb_dds)
         # reload UI
         importlib.reload(nvb_ui)
         # stdout message because I'm paranoid
@@ -198,6 +200,7 @@ neverblender_classes = (
     nvb_plt.NVB_OT_plt_import,
     nvb_plt.NVB_OT_plt_export,
     nvb_plt.NVB_OT_plt_setup,
+    nvb_dds.NVB_OT_dds_convert,
 )
 
 
@@ -242,16 +245,21 @@ def register():
     bpy.types.TOPBAR_MT_file_import.append(menu_func_import)
     bpy.types.TOPBAR_MT_file_export.append(menu_func_export)
     bpy.types.IMAGE_MT_image.append(nvb_plt.menu_func_setup)
+    bpy.types.IMAGE_MT_image.append(nvb_dds.menu_func)
 
     # Register PLT autoreload timer
     nvb_plt_autoreload.register()
+    # Register DDS conversion handlers
+    nvb_dds.register()
 
 
 def unregister():
     """Removes properties and UI entries. Called explicitly by Blender."""
     # Unregister PLT autoreload timer
     nvb_plt_autoreload.unregister()
+    nvb_dds.unregister()
 
+    bpy.types.IMAGE_MT_image.remove(nvb_dds.menu_func)
     bpy.types.IMAGE_MT_image.remove(nvb_plt.menu_func_setup)
     bpy.types.TOPBAR_MT_file_export.remove(menu_func_export)
     bpy.types.TOPBAR_MT_file_import.remove(menu_func_import)

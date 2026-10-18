@@ -59,6 +59,11 @@ Everything in Neverblender 4.0 (the last Neverwinter Vault release), plus:
 - **PLT textures**: *File > Import / Export > NWN PLT Texture (.plt)*, and
   *Image > Setup PLT Layer Images* in the image editor; an optional autoreload
   of PLT files changed on disk (add-on preferences).
+- **NWN DDS textures show up.** The game's own DDS format (no `DDS ` magic)
+  is converted to PNG on import and cached in `~/.cache/nwn-dds`; the image
+  keeps the texture's name, so exports still write the right bitmap. Turn it
+  off in the add-on preferences; *Image > Convert NWN DDS textures* converts
+  on demand.
 - **Export Phenotypes**: *File > Export > Aurora Phenotypes (.mdl)* exports a
   model scaled for each race and gender.
 - Armature tools: *Update Animation*, hook skinmeshes, world coordinates.
@@ -109,7 +114,7 @@ Credits
   unchanged from the version they shared. Used with their permission; they
   do not support it, so report problems here.
 - **plenarius** maintains this repository: Blender 3.3 to 5.2, smoothing
-  groups, precision, the cleanmodels integration and fixes.
+  groups, precision, the cleanmodels integration, NWN DDS textures and fixes.
 
 License
 -------

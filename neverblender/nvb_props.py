@@ -149,6 +149,9 @@ class NVB_addon_properties(bpy.types.AddonPreferences):
     import_mat_lowercase: bpy.props.BoolProperty(
         name="Force Lowercase", default=True,
         description="Lower case material and texture names.")
+    dds_convert: bpy.props.BoolProperty(
+        name="Convert NWN DDS textures", default=True,
+        description="Show NWN-format DDS textures by converting them to cached PNGs (~/.cache/nwn-dds)")
     import_ignore_mdl_diffuse_color: bpy.props.BoolProperty(
         name="Ignore diffuse color", default=False,
         description="Ignore diffuse color MDL parameter when importing")
@@ -362,6 +365,7 @@ class NVB_addon_properties(bpy.types.AddonPreferences):
         box.prop(self, 'mat_displacement_mode')
         box.prop(self, 'import_mat_lowercase')
         box.prop(self, 'import_mat_mtr')
+        box.prop(self, 'dds_convert')
         box.prop(self, 'import_ignore_mdl_diffuse_color', text="Ignore Diffuse")
         box.prop(self, 'import_ignore_mdl_specular_color', text="Ignore Specular")
         box.prop(self, 'import_ignore_mdl_ambient_color', text="Ignore Ambient")
