@@ -15,6 +15,18 @@ from . import nvb_utils
 from . import nvb_cleanmodels
 
 
+
+def report_import_warnings(operator, options, shown=10):
+    """Show what the import found wrong (decompile warnings, models that
+    could not be read) in Blender's status bar and Info editor."""
+    if not options.warnings:
+        return
+    for text in options.warnings[:shown]:
+        operator.report({'WARNING'}, text)
+    more = len(options.warnings) - shown
+    operator.report({'WARNING'}, "Import: {} warning(s){}, see the Info editor or the system console".format(
+        len(options.warnings), " ({} more in the console)".format(more) if more > 0 else ""))
+
 class NVB_OT_mdlexport(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
     """Export Aurora Engine model (.mdl)"""
 
@@ -463,7 +475,7 @@ class NVB_OT_mdlimport(bpy.types.Operator, bpy_extras.io_utils.ImportHelper):
             # Single file => NEVER overwrite locations
             if self.filepath:
                 load_file(context, self.filepath, options)
-
+        report_import_warnings(self, options)
         return {'FINISHED'}
 
     def draw(self, context):
@@ -607,6 +619,7 @@ class NVB_OT_mdl_superimport(bpy.types.Operator, bpy_extras.io_utils.ImportHelpe
             options.anim_scale = mdl_base.nvb.animscale
         for filepath in pathlist:
             load_file(filepath, mdl_base, options)
+        report_import_warnings(self, options)
         return {'FINISHED'}
 
     @classmethod

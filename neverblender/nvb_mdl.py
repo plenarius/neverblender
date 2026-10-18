@@ -198,21 +198,21 @@ class Mdl():
     def decompile_bundled(mdl_filepath, options):
         """Decompile a binary MDL with the bundled cleanmodels decompiler.
 
-        Returns the ASCII cleanmodels would write, or None if the file is not
-        a readable binary model. Skinned body parts get their bone names from
+        Returns the ASCII cleanmodels would write; raises
+        cleanmodels.DecompileError if the file is not a readable binary
+        model. Its warnings are added to options.warnings. Skinned body parts get their bone names from
         the creature skeleton, looked up next to the model, then in the game
         folder (the add-on preference, else the usual install locations).
         """
         with open(os.fsencode(mdl_filepath), 'rb') as f:
             data = f.read()
         dirs = cleanmodels.lookup_dirs(mdl_filepath, game_dir=options.cleanmodels_game_dir)
-        try:
-            model = cleanmodels.decompile(data, dirs)
-        except cleanmodels.DecompileError as e:
-            print(f"Neverblender: {os.path.basename(mdl_filepath)}: {e}")
-            return None
+        name = os.path.basename(mdl_filepath)
+        model = cleanmodels.decompile(data, dirs)
         for w in model.warnings:
-            print(f"Neverblender: {os.path.basename(mdl_filepath)}: {w.node + ': ' if w.node else ''}{w.message}")
+            text = f"{name}: {w.node + ': ' if w.node else ''}{w.message}"
+            print("Neverblender: " + text)
+            options.warnings.append(text)
         return cleanmodels.write(model)
 
     def parse_mdl(self, mdl_filepath, options):
@@ -221,7 +221,7 @@ class Mdl():
             # cleanmodels reads binary and ASCII models alike and returns
             # canonical ASCII; if it can't, fall back to the paths below.
             ascii_text = nvb_cleanmodels.to_ascii(options.cleanmodels_path, mdl_filepath,
-                                                  options.cleanmodels_game_dir)
+                                                  options.cleanmodels_game_dir, options.warnings)
             if ascii_text is not None:
                 self.read_ascii_mdl(ascii_text, options)
                 return
@@ -230,13 +230,15 @@ class Mdl():
             # copy of cleanmodels' decompiler (the same ASCII the cleanmodels
             # program writes), then, failing that, an external decompiler.
             decompiled = False
+            failure = ""
             try:
                 ascii_content = Mdl.decompile_bundled(mdl_filepath, options)
-                if ascii_content:
-                    self.read_ascii_mdl(ascii_content, options)
-                    decompiled = True
             except Exception as e:
+                failure = str(e)
                 print(f"Neverblender: Decompiling {mdl_filepath} failed: {e}")
+            else:
+                self.read_ascii_mdl(ascii_content, options)
+                decompiled = True
 
             # Fall back to external compiler if built-in failed and external is configured
             if not decompiled and options.compiler_use and os.path.isfile(options.compiler_path):
@@ -273,6 +275,8 @@ class Mdl():
             
             if not decompiled:
                 print("Neverblender: ERROR - Could not decompile binary MDL file.")
+                options.warnings.append("{}: could not be read{}".format(
+                    os.path.basename(mdl_filepath), ": " + failure if failure else ""))
                 """
                 # Legacy external compiler code preserved for reference
                 # Does only work with nwnmdlcomp, not cleanmodels

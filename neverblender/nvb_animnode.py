@@ -1,5 +1,6 @@
 """TODO: DOC."""
 
+import math
 import mathutils
 from bpy_extras.io_utils import unpack_list
 
@@ -107,7 +108,14 @@ class Animnode():
                 self.parentName = nvb_utils.str2identifier(line[1])
             # Animeshes
             elif label == 'sampleperiod':
-                self.sampleperiod = float(line[1])
+                # Stock GUI models write "1.#INF" for a single sample; like
+                # cleanmodels, keep the default (0) for what isn't a number
+                try:
+                    self.sampleperiod = float(line[1])
+                except ValueError:
+                    self.sampleperiod = 0.0
+                if not math.isfinite(self.sampleperiod):
+                    self.sampleperiod = 0.0
             elif label == 'faces':
                 if not self.facedef:
                     valcnt = int(line[1])
@@ -247,6 +255,10 @@ class Animnode():
                   obj.name)
             return
         sample_cnt = len(self.animverts) // vert_cnt
+        if sample_cnt > 1 and self.sampleperiod <= 0.00001:
+            print("Neverblender: WARNING - sampleperiod period is 0 for " +
+                  obj.name)
+            return
 
         fps = options.scene.render.fps
         frame_start = anim.frameStart
@@ -282,10 +294,23 @@ class Animnode():
         # One sample holds a coordinate per texture vertex the faces use (or,
         # in compiled models, per vertex); the samples are as many as the data
         # holds, which need not be length/period + 1.
-        face_uv_indices = [tuple(f[4:7]) for f in self.facedef]
-        face_uv_indices = unpack_list(face_uv_indices)
+        # Each face corner takes the sample value of its texture vertex, as
+        # the mesh's faces give it (kept when this import created the mesh),
+        # else as the animation's copy of the faces does, without the faces
+        # that use a vertex twice (dropped from the mesh, see
+        # Trimesh.clamp_faces).
+        vert_cnt = len(obj.data.vertices)
+        face_uv_indices = options.mesh_face_tverts.get(obj.data.name)
+        if face_uv_indices is None or len(face_uv_indices) != len(obj.data.loops):
+            facedef = [f for f in self.facedef
+                       if len({min(max(0, i), vert_cnt - 1) for i in f[0:3]}) == 3]
+            face_uv_indices = unpack_list([tuple(f[4:7]) for f in facedef])
+        if len(face_uv_indices) != len(obj.data.loops):
+            print("Neverblender: WARNING - animtvert face mismatch: " +
+                  obj.name)
+            return
         sample_size = 0
-        for size in (max(face_uv_indices, default=-1) + 1, len(obj.data.vertices)):
+        for size in (max(face_uv_indices, default=-1) + 1, vert_cnt):
             if size > 0 and len(self.animtverts) % size == 0 and size > max(face_uv_indices, default=-1):
                 sample_size = size
                 break
@@ -293,24 +318,83 @@ class Animnode():
             print("Neverblender: WARNING - animtvert sample size mismatch: " +
                   obj.name)
             return
-        # Create uv layers
-        sample_fstr = 'animtverts.'+anim.name+'.{:d}'
+        if len(self.animtverts) // sample_size > 1 and self.sampleperiod <= 0.00001:
+            print("Neverblender: WARNING - sampleperiod period is 0 for " +
+                  obj.name)
+            return
+        # One 3D attribute per sample and face corner: (u, v, 0). Blender
+        # allows only 8 UV maps per mesh, and 2D corner attributes count as
+        # UV maps from Blender 3.5 on, 3D ones never do.
+        sample_fstr = Animnode.animtverts_prefix(anim) + '{:d}'
         sampler = enumerate(zip(*[iter(self.animtverts)] * sample_size))
         for sample_idx, sample in sampler:
-            face_uv_coords = [sample[i] for i in face_uv_indices]
-            face_uv_coords = unpack_list(face_uv_coords)
-            uv_layer = obj.data.uv_layers.new(do_init=False)
-            if uv_layer is None:
-                # Blender allows 8 UV maps per mesh; each sample is one
-                print("Neverblender: WARNING - {}: only the first {} of {} UV animation samples of {} fit in "
-                      "Blender's UV maps".format(obj.name, sample_idx, len(self.animtverts) // sample_size,
-                                                 anim.name))
-                break
-            uv_layer.name = sample_fstr.format(sample_idx)
-            try:
-                uv_layer.data.foreach_set('uv', face_uv_coords[:2*len(uv_layer.data)])
-            except:
-                print("Neverblender: ERROR - animtvert data mismatch for " + obj.name)
+            coords = unpack_list([(*sample[i], 0.0) for i in face_uv_indices])
+            attr = obj.data.attributes.new(sample_fstr.format(sample_idx),
+                                           'FLOAT_VECTOR', 'CORNER')
+            attr.data.foreach_set('vector', coords)
+
+    @staticmethod
+    def animtverts_prefix(anim):
+        """Name prefix of an animation's UV samples (attributes or, in files
+        made before 4.4.0, UV maps)."""
+        return 'animtverts.' + anim.name + '.'
+
+    @staticmethod
+    def sampleperiod_prop(anim):
+        """Name of the mesh property that keeps an animation's sample period."""
+        return 'sampleperiod.' + anim.name
+
+    @staticmethod
+    def get_shape_samples(obj, anim):
+        """The shape key samples of an animation: (frame, eval_time) of each
+        eval_time keyframe in it, or [] if there are none."""
+        shape_keys = obj.data.shape_keys
+        if not shape_keys or shape_keys.use_relative or not shape_keys.key_blocks:
+            return []
+        try:
+            action = shape_keys.animation_data.action
+        except AttributeError:
+            return []
+        fcurves = nvb_utils.get_action_fcurves(action, shape_keys)
+        fcu = fcurves.find(data_path='eval_time', index=0) if fcurves else None
+        if not fcu:
+            return []
+        return [(k.co[0], k.co[1]) for k in fcu.keyframe_points
+                if anim.frameStart <= round(k.co[0], 5) <= anim.frameEnd + 0.04]
+
+    @staticmethod
+    def animesh_sample_period(obj, anim, num_samples, options):
+        """The time between an animation's samples: where its shape key
+        samples are, else as imported, else the samples spread over the
+        animation (a single sample spans all of it)."""
+        fps = options.scene.render.fps
+        frames = [f for f, _ in Animnode.get_shape_samples(obj, anim)]
+        if len(frames) >= 2:
+            return (frames[1] - frames[0]) / fps
+        period = obj.data.get(Animnode.sampleperiod_prop(anim))
+        if period:
+            return period
+        anim_length = (anim.frameEnd - anim.frameStart) / fps
+        return anim_length / max(num_samples - 1, 1)
+
+    @staticmethod
+    def get_animtvert_samples(mesh, anim):
+        """An animation's UV samples, in order: per sample, (u, v) per face corner."""
+        prefix = Animnode.animtverts_prefix(anim)
+
+        def index(name):
+            suffix = name[len(prefix):]
+            return int(suffix) if suffix.isdigit() else None
+        samples = {}
+        # Neverblender 4.3 and earlier stored them as UV maps
+        for uvl in mesh.uv_layers:
+            if uvl.name.startswith(prefix) and index(uvl.name) is not None:
+                samples[index(uvl.name)] = [tuple(d.uv) for d in uvl.data]
+        for attr in mesh.attributes:
+            if attr.name.startswith(prefix) and index(attr.name) is not None and \
+               attr.domain == 'CORNER' and attr.data_type == 'FLOAT_VECTOR':
+                samples[index(attr.name)] = [tuple(d.vector[:2]) for d in attr.data]
+        return [samples[k] for k in sorted(samples)]
 
     @staticmethod
     def create_restpose(obj, frame=1):
@@ -373,18 +457,16 @@ class Animnode():
                 print("Neverblender: WARNING - No mesh data for " +
                     obj.name)
                 return
-            # Sanity Check: Sample period can't be 0
-            if self.sampleperiod <= 0.00001:
-                print("Neverblender: WARNING - sampleperiod period is 0 for " +
-                    obj.name)
-                return
-            # Sanity Check: animation length == multiple of sampleperiod
-            if animlength % self.sampleperiod > 0.0:
-                print("Neverblender: WARNING - sampleperiod mismatch for " +
-                    obj.name)
-                return
-            # Import animesh as extra uv maps and shapekeys
+            # A sample period of 0 is fine for a single sample only (see
+            # create_data_shape and create_data_uv)
+            # The samples are as many as the data holds, so the animation
+            # length need not be a multiple of the period (and in floating
+            # point rarely is exactly: 27 stock animmeshes were skipped).
+            # Import animesh as UV sample attributes and shapekeys
             if obj.nvb.meshtype == nvb_def.Meshtype.ANIMMESH:
+                # UV samples have no keyframes to keep their timing by
+                if self.sampleperiod > 0.00001:
+                    obj.data[Animnode.sampleperiod_prop(anim)] = self.sampleperiod
                 if self.uvdata:
                     self.create_data_uv(obj, anim, animlength, options)
                 if self.shapedata:
@@ -567,35 +649,11 @@ class Animnode():
     def generate_ascii_animesh_shapes(obj, anim, ascii_lines, options,
                                       required_samples=0):
         """Add data for animated vertices."""
-        # Must be absolute shapekeys
-        shape_keys = obj.data.shape_keys
-        if not shape_keys or shape_keys.use_relative:
-            return -1
-        # There need to be key blocks
-        key_blocks = obj.data.shape_keys.key_blocks
-        if not key_blocks:
-            return -1
-        # Get the action from which to export from
-        try:
-            action = shape_keys.animation_data.action
-        except AttributeError:
-            return -1
-        # Get eval time fcurve
-        fcurves = nvb_utils.get_action_fcurves(action, shape_keys)
-        if not fcurves:
-            return -1
-        fcu = fcurves.find(data_path='eval_time', index=0)
-        if not fcu:
-            return -1
-        # Gather animation data
-        anim_start = anim.frameStart
-        anim_end = anim.frameEnd
-        fps = options.scene.render.fps
-
-        eval_times = [k.co[1] for k in fcu.keyframe_points
-                      if anim_start <= round(k.co[0], 5) <= anim_end + 0.04]
+        # Must be absolute shapekeys, keyed by eval_time
+        eval_times = [et for _, et in Animnode.get_shape_samples(obj, anim)]
         if not eval_times:
             return -1
+        key_blocks = obj.data.shape_keys.key_blocks
 
         # rel_kb = [(kb.frame, kb.data) for kb in key_blocks if not kb.mute]
         anim_verts = []
@@ -631,11 +689,9 @@ class Animnode():
             ascii_lines.append('    clipw 1.0')
             ascii_lines.append('    cliph 1.0')
 
-            anim_length = (anim_end - anim_start) / fps
-            # A single sample spans the whole animation
-            sample_period = anim_length / max(num_samples - 1, 1)
+            sample_period = Animnode.animesh_sample_period(obj, anim, num_samples, options)
             ascii_lines.append('    sampleperiod ' +
-                            str(round(sample_period, 3)))
+                            '{:.7g}'.format(sample_period))
         # Create ascii representation and add it to the output
         ascii_lines.append('    animverts ' + str(num_samples * num_verts))
         fstr = '     ' + 3 * ' {: 8.5f}'
@@ -652,19 +708,13 @@ class Animnode():
         blen_mesh = obj.data
         if not blen_mesh:
             return -1
-        anim_uv_prefix = "animtverts." + anim.name
-        anim_uv_layers = [l for l in blen_mesh.uv_layers
-                          if l.name.startswith(anim_uv_prefix)]
+        anim_uv_samples = Animnode.get_animtvert_samples(blen_mesh, anim)
         # No anim tverts
-        if not anim_uv_layers:
+        if not anim_uv_samples:
             return -1
-        # Gather animation data
-        anim_start = anim.frameStart
-        anim_end = anim.frameEnd
-        fps = options.scene.render.fps
         # Misc data for export
-        num_samples = len(anim_uv_layers)
-        num_tverts = len(anim_uv_layers[0].data)
+        num_samples = len(anim_uv_samples)
+        num_tverts = len(anim_uv_samples[0])
         if required_samples > 0:
             # Not necessary to add meta data
             # BUT: Sanity check
@@ -679,16 +729,14 @@ class Animnode():
             ascii_lines.append('    clipw 1.0')
             ascii_lines.append('    cliph 1.0')
 
-            anim_length = (anim_end - anim_start) / fps
-            # A single sample spans the whole animation
-            sample_period = anim_length / max(num_samples - 1, 1)
+            sample_period = Animnode.animesh_sample_period(obj, anim, num_samples, options)
             ascii_lines.append('    sampleperiod ' +
-                               str(round(sample_period, 3)))
+                               '{:.7g}'.format(sample_period))
         # Create ascii representation and add it to the output
         ascii_lines.append('    animtverts ' + str(num_samples * num_tverts))
         fstr = '      {: 7.4f} {: 7.4f}  0'
-        uv_coord_list = [[tuple(map(lambda x: round(x, 4), d.uv))
-                         for d in uvl.data] for uvl in anim_uv_layers]
+        uv_coord_list = [[tuple(map(lambda x: round(x, 4), uv))
+                         for uv in sample] for sample in anim_uv_samples]
         for coords in uv_coord_list:
             ascii_lines.extend([fstr.format(c[0], c[1]) for c in coords])
         ascii_lines.append('    endlist')

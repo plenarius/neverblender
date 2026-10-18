@@ -481,6 +481,12 @@ class Trimesh(Node):
             #    [(f[5], f[6], f[4]) if f[6] == 0 else (f[4], f[5], f[6])
             #     for f in self.facedef]
             face_uv_indices = unpack_list(face_uv_indices)
+            if self.nodetype == nvb_def.Nodetype.ANIMMESH:
+                # The texture vertex of each face corner, for the animation's
+                # UV samples: the game takes them from these faces, not from
+                # the animation's own copy (which can differ: water tiles
+                # store their 32 faces twice here, once there).
+                options.mesh_face_tverts[blen_mesh.name] = face_uv_indices
             for layer_idx, uv_coords in enumerate(self.texture_coordinates):
                 if uv_coords:
                     uv_count = len(uv_coords)
@@ -696,7 +702,7 @@ class Trimesh(Node):
                     # Export all, sort alphabetically, put active first
                     uv_active_name = mesh.uv_layers.active.name
                     uv_layer_list = [lay for lay in mesh.uv_layers
-                                     if not lay.name != uv_active_name and
+                                     if lay.name != uv_active_name and
                                      not lay.name.startswith("animtverts.")]
                     uv_layer_list.sort(key=lambda l: l.name)
                     uv_layer_list = [mesh.uv_layers.active] + uv_layer_list

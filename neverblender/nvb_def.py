@@ -281,6 +281,12 @@ class ImportOptions():
         # cleanmodels (optional, see nvb_cleanmodels): path if found and enabled
         self.cleanmodels_path = None
         self.cleanmodels_game_dir = ""
+        # What the import operator reports in Blender's interface: decompile
+        # warnings and models that could not be read
+        self.warnings = []
+        # Animmesh mesh name -> texture vertex index per face corner (see
+        # Trimesh.create_blender_mesh, Animnode.create_data_uv)
+        self.mesh_face_tverts = {}
         # Geometry
         self.geom_import = True
         self.geom_smoothgroups = True
