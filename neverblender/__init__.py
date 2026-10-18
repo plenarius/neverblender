@@ -87,13 +87,13 @@ if 'bpy' in locals():
 bl_info = {
     "name": "Neverblender",
     "author": "Attila Gyoerkoes",
-    'version': (4, 3, 0),
+    'version': (4, 3, 1),
     "blender": (3, 3, 0),
-    "location": "File > Import-Export, Object Properties",
+    "location": "File > Import-Export; Object, Bone and Scene Properties",
     "description": "Import, export and edit Aurora mdl format",
     "warning": "",
     "wiki_url": "https://nwn.wiki/display/NWN1/Neverblender",
-    "tracker_url": "https://github.com/gyoerkaa/mdltools",
+    "tracker_url": "https://github.com/plenarius/neverblender/issues",
     "category": "Import-Export"}
 
 
