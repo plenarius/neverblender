@@ -912,7 +912,7 @@ class NVB_OT_amt_event_delete(bpy.types.Operator):
                 return
             # Remove the current data path for that idx
             data_path = 'nvb.amt_event_list[' + str(event_id) + '].fire'
-            fcu = fcurves.find(data_path, 0)
+            fcu = fcurves.find(data_path, index=0)
             if fcu:
                 fcurves.remove(fcu)
 
@@ -928,7 +928,7 @@ class NVB_OT_amt_event_delete(bpy.types.Operator):
             dp_suffix = '].fire'
             for ev_id in event_id_list:
                 data_path = dp_prefix + str(ev_id) + dp_suffix
-                fcu = fcurves.find(data_path, 0)
+                fcu = fcurves.find(data_path, index=0)
                 if fcu:
                     fcu.data_path = dp_prefix + str(ev_id-1) + dp_suffix
 

@@ -806,13 +806,25 @@ def amt_event_list_item_create(amt, event_name):
     if not action:
         action = bpy.data.actions.new(amt.name)
         anim_data.action = action
-    data_path = 'nvb.amt_event_list[' + str(amt.nvb.amt_event_list_idx) + '].fire'
+    amt_event_fcurve_create(amt, action, amt.nvb.amt_event_list_idx)
+
+
+def amt_event_fcurve_create(amt, action, event_idx):
+    """Get or create the (grouped) fcurve for an armature event."""
+    data_path = 'nvb.amt_event_list[' + str(event_idx) + '].fire'
     fcu = get_fcurve(action, data_path, 0, 'Events', target=amt)
     # Force group assignment (only needed for Blender 4.x)
     if not BLENDER_50_PLUS:
         groups = get_action_groups(action, amt)
         if groups and 'Events' in groups:
             fcu.group = groups['Events']
+    return fcu
+
+
+def init_amt_event_action(amt, action):
+    """Make sure the action has an fcurve for every armature event."""
+    for event_idx in range(len(amt.nvb.amt_event_list)):
+        amt_event_fcurve_create(amt, action, event_idx)
 
 
 def amt_event_list_init(amt):
