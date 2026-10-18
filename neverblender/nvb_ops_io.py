@@ -65,8 +65,9 @@ class NVB_OT_mdlexport(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
             description='Run cleanmodels checks on the exported models and list the findings (Scene properties)',
             default=True)
     cleanmodels_compile: bpy.props.BoolProperty(
-            name='Compile with cleanmodels',
-            description='Write game-ready binary models instead of ASCII (walkmeshes stay ASCII)',
+            name='Compile to Binary',
+            description='Write game-ready binary models instead of ASCII (walkmeshes stay ASCII): with the '
+                        'cleanmodels program if it is found, else with Neverblender\'s copy of its compiler',
             default=False)
     export_smoothing_mode: bpy.props.EnumProperty(
             name='Smoothing',
@@ -204,30 +205,35 @@ class NVB_OT_mdlexport(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
         return {'FINISHED'}
 
     def cleanmodels_after_export(self, options):
-        """Check and/or compile the model just written, if cleanmodels is used."""
+        """Check (cleanmodels program only) and/or compile the model just written."""
         cm = options.cleanmodels_path
-        if not cm:
-            return
-        if options.cleanmodels_check:
+        if cm and options.cleanmodels_check:
             options.cleanmodels_findings.extend(
                 nvb_cleanmodels.check(cm, options.filepath, options.cleanmodels_game_dir))
         if options.cleanmodels_compile:
-            ok, msgs = nvb_cleanmodels.compile_to(cm, options.filepath, options.filepath,
-                                                  options.cleanmodels_game_dir)
-            if not ok:
+            if cm:
+                error, warnings = nvb_cleanmodels.compile_to(cm, options.filepath, options.filepath,
+                                                             options.cleanmodels_game_dir)
+            else:
+                error, warnings = nvb_cleanmodels.compile_bundled(options.filepath, options.filepath,
+                                                                  options.cleanmodels_game_dir)
+            for w in warnings:
+                options.cleanmodels_findings.append(dict(
+                    file=options.filepath, check="compile", node="", severity="warning", message=w))
+            if error:
                 options.cleanmodels_findings.append(dict(
                     file=options.filepath, check="compile", node="", severity="error",
-                    message="Compile failed, the ASCII model was kept: " + " | ".join(msgs)[:500]))
+                    message="Compile failed, the ASCII model was kept: " + error[:500]))
 
     def draw(self, context):
         """Draw the export UI."""
         layout = self.layout
         addon_prefs = context.preferences.addons[__package__].preferences
+        box = layout.box()
+        box.label(text='cleanmodels')
         if nvb_cleanmodels.find_from_prefs(addon_prefs)[0]:
-            box = layout.box()
-            box.label(text='cleanmodels')
             box.prop(self, 'cleanmodels_check')
-            box.prop(self, 'cleanmodels_compile')
+        box.prop(self, 'cleanmodels_compile')
         # Misc Export Settings
         box = layout.box()
         box.prop(self, 'export_animations')
@@ -290,18 +296,22 @@ class NVB_OT_mdlexport(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
         options.strip_trailing = self.strip_trailing
         options.batch_mode = self.batch_mode
         # cleanmodels (optional)
+        # Compiling works without the cleanmodels program (Neverblender has a
+        # copy of its compiler); checking needs it
         cm_path, _ = nvb_cleanmodels.find_from_prefs(addon_prefs)
+        options.cleanmodels_game_dir = bpy.path.abspath(addon_prefs.cleanmodels_game_dir)
+        options.cleanmodels_compile = self.cleanmodels_compile
         if cm_path and (self.cleanmodels_check or self.cleanmodels_compile):
             options.cleanmodels_path = cm_path
-            options.cleanmodels_game_dir = bpy.path.abspath(addon_prefs.cleanmodels_game_dir)
             options.cleanmodels_check = self.cleanmodels_check
-            options.cleanmodels_compile = self.cleanmodels_compile
         result = self.mdl_export(context, options)
-        if options.cleanmodels_path:
+        if options.cleanmodels_path or options.cleanmodels_compile:
             n = nvb_utils.store_cleanmodels_findings(context.scene, options.cleanmodels_findings)
             worst = {f["severity"] for f in options.cleanmodels_findings}
             level = {'ERROR'} if worst & {"error", "fatal"} else {'WARNING'} if "warning" in worst else {'INFO'}
             done = "compiled" if options.cleanmodels_compile else "checked"
+            if not options.cleanmodels_path:
+                done += " (built-in compiler)"
             self.report(level, "cleanmodels {}: {} finding(s), see Scene properties > cleanmodels".format(done, n))
         return result
 

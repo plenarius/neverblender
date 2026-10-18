@@ -58,6 +58,10 @@ Everything in Neverblender 4.0 (the last Neverwinter Vault release), plus:
 - **Binary models import directly**, with cleanmodels' decompiler built in:
   the same model the cleanmodels program reads, emitters, animated meshes and
   skinned body parts included, with or without cleanmodels installed.
+- **Binary models export directly**: *Compile to Binary* in the export options
+  writes game-ready binaries with cleanmodels' compiler built in, the same
+  bytes the cleanmodels program writes, with or without cleanmodels installed
+  (walkmeshes stay ASCII).
 - **PLT textures**: *File > Import / Export > NWN PLT Texture (.plt)*, and
   *Image > Setup PLT Layer Images* in the image editor; an optional autoreload
   of PLT files changed on disk (add-on preferences).
@@ -88,8 +92,8 @@ path in the add-on preferences, or anywhere on your `PATH`), it also:
 - **checks exported models** (*Check with cleanmodels* in the export options,
   on by default) and lists the findings in *Scene properties > cleanmodels*,
   with a button that selects the object each finding is about;
-- **compiles exported models** to game-ready binaries (*Compile with
-  cleanmodels*, off by default; walkmeshes stay ASCII).
+- **compiles exported models** with the program itself (*Compile to Binary*,
+  off by default; walkmeshes stay ASCII).
 - **makes variants** (cleanmodels 4.7.0 or later): *Scene properties >
   cleanmodels Variants* fits the selected robe, cloak or armour part
   (named for its body, like `pmh0_robe003` or `pfe0_chest050`) to the other
@@ -107,12 +111,15 @@ path in the add-on preferences, or anywhere on your `PATH`), it also:
   Bodies* lists every body in the game install and the resources, without
   selecting a model, and marks the ones only the resources have.
 
-Without cleanmodels, binary models are read by a copy of cleanmodels'
-decompiler that ships with Neverblender (`neverblender/cleanmodels`, from the
-cleanmodels repository, where CI checks it gives the same output as the
-cleanmodels program). Skinned body parts (`pmh0_neck001` and the like) get their
-bone names from the creature skeleton: next to the model, or in the game folder
-(*Game folder* in the preferences, or the usual install locations).
+Without cleanmodels, binary models are read and written by a copy of
+cleanmodels' decompiler and compiler that ships with Neverblender
+(`neverblender/cleanmodels`, from the cleanmodels repository, where CI checks
+it gives the same output as the cleanmodels program). Skinned body parts
+(`pmh0_neck001` and the like) get their bone names from the creature skeleton,
+and a compiled model's node numbers come from its supermodel: both are looked
+up next to the model, then in the game folder (*Game folder* in the
+preferences, or the usual install locations). Compile warnings, such as a
+supermodel that isn't found, are listed in *Scene properties > cleanmodels*.
 
 Reporting problems
 ------------------

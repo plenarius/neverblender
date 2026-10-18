@@ -172,16 +172,54 @@ def check(path, mdl_path, game_dir=""):
 
 
 def compile_to(path, ascii_path, out_path, game_dir=""):
-    """Compile ascii_path to a binary model at out_path. Returns (ok, messages)."""
-    args = ["compile", "--overwrite"]
+    """Compile ascii_path to a binary model at out_path with the cleanmodels
+    program. Returns (error, warnings): error is "" if it compiled, warnings
+    are its parse and compile warnings as text."""
+    args = ["compile", "--json-lines", "--overwrite"]
     if game_dir:
         args += ["--game-dir", game_dir]
     try:
         result = _run(path, args + [ascii_path, out_path])
     except (OSError, subprocess.SubprocessError) as e:
-        return False, [str(e)]
-    lines = [ln.strip() for ln in (result.stdout + result.stderr).splitlines() if ln.strip()]
-    return result.returncode == 0 and os.path.isfile(out_path), lines
+        return str(e) or "cleanmodels failed", []
+    error, warnings = "", []
+    for line in result.stdout.splitlines():
+        try:
+            ev = json.loads(line)
+        except ValueError:
+            continue
+        if ev.get("type") == "error":
+            error = ev.get("message", "")
+        elif ev.get("type") == "done":
+            res = ev.get("result", {})
+            error = res.get("error", "") or error
+            warnings += res.get("parse_warnings") or []
+            for w in res.get("warnings") or []:
+                node = w.get("node", "")
+                warnings.append((node + ": " if node else "") + w.get("message", ""))
+    if result.returncode != 0 or not os.path.isfile(out_path):
+        error = error or (result.stderr or result.stdout).strip()[:500] or "cleanmodels failed"
+    return error.strip(), warnings
+
+
+def compile_bundled(ascii_path, out_path, game_dir=""):
+    """Compile ascii_path to a binary model at out_path with Neverblender's
+    copy of cleanmodels' compiler (neverblender/cleanmodels): the same bytes
+    the cleanmodels program writes. Returns (error, warnings) as compile_to."""
+    from . import cleanmodels
+    try:
+        with open(os.fsencode(ascii_path), "rb") as f:
+            res = cleanmodels.parse(f.read())
+        res.model.file_type = "ascii"
+        warnings = [str(e) for e in res.errors]
+        # Supermodels, skeletons and materials: the model's folder, then the game
+        dirs = cleanmodels.lookup_dirs(ascii_path, game_dir=game_dir)
+        data = cleanmodels.compile(res.model, dirs, dirs, warnings.append)
+    except (cleanmodels.NotModelError, cleanmodels.CompileError, OSError) as e:
+        return str(e) or type(e).__name__, []
+    with open(os.fsencode(out_path), "wb") as f:
+        f.write(data)
+    return "", warnings
 
 
 def _resource_args(game_dir="", resource_dirs=()):
