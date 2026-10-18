@@ -1321,3 +1321,60 @@ class NVB_PG_cmfinding(bpy.types.PropertyGroup):
     severity: bpy.props.StringProperty()
     message: bpy.props.StringProperty()
 
+
+
+class NVB_PG_cm_body(bpy.types.PropertyGroup):
+    """A body cleanmodels can make a variant for."""
+    use: bpy.props.BoolProperty(name="Make", default=True,
+                                description="Make a variant for this body")
+    race: bpy.props.StringProperty()
+    phenotype: bpy.props.IntProperty()
+    phenotype_name: bpy.props.StringProperty()
+    same_shape: bpy.props.StringProperty(
+        description="Same shape as this body: the variant is a copy of that one")
+
+
+class NVB_PG_cm_variants(bpy.types.PropertyGroup):
+    """Settings for making variants with cleanmodels (Scene properties)."""
+    output_dir: bpy.props.StringProperty(
+        name="Output", subtype='DIR_PATH', default="//variants/",
+        description="Folder the variants are written to")
+    bodies: bpy.props.CollectionProperty(type=NVB_PG_cm_body)
+    bodies_index: bpy.props.IntProperty()
+    bodies_model: bpy.props.StringProperty(
+        description="The model the body list was made for")
+    width: bpy.props.FloatProperty(
+        name="Width", default=1.0, min=0.5, max=2.0, step=1,
+        description="Multiply the fit's width across every bone (1.05: 5% looser)")
+    length: bpy.props.FloatProperty(
+        name="Length", default=1.0, min=0.5, max=2.0, step=1,
+        description="Multiply the fit's stretch along every bone")
+    shoulders: bpy.props.FloatProperty(name="Shoulders", default=1.0, min=0.5, max=2.0, step=1,
+                                       description="Narrow or widen the shoulders after the fit")
+    chest: bpy.props.FloatProperty(name="Chest", default=1.0, min=0.5, max=2.0, step=1,
+                                   description="Narrow or widen the chest after the fit")
+    waist: bpy.props.FloatProperty(name="Waist", default=1.0, min=0.5, max=2.0, step=1,
+                                   description="Narrow or widen the waist after the fit")
+    hips: bpy.props.FloatProperty(name="Hips", default=1.0, min=0.5, max=2.0, step=1,
+                                  description="Narrow or widen the hips after the fit")
+    hem: bpy.props.FloatProperty(name="Hem", default=1.0, min=0.5, max=2.0, step=1,
+                                 description="Narrow or widen the hem after the fit (sleeves stay on the arms)")
+    compile_binary: bpy.props.BoolProperty(
+        name="Compile", default=False,
+        description="Write compiled (binary) models instead of ASCII")
+    overwrite: bpy.props.BoolProperty(
+        name="Overwrite", default=False,
+        description="Replace existing files in the output folder")
+    previews: bpy.props.BoolProperty(
+        name="Show on Bodies", default=True,
+        description="Import each variant on its body into a Variants collection, side by side, to check the fit")
+    resource_dir: bpy.props.StringProperty(
+        name="Resources", subtype='FILE_PATH', default="",
+        description="Extra folder, or .hak/.erf/.mod, with supermodels, skeletons, capart.2da and materials "
+                    "(custom bodies are found here)")
+
+    def shape_arg(self):
+        """The --shape value for the regions that are not 1."""
+        regions = ("shoulders", "chest", "waist", "hips", "hem")
+        return ",".join("{}={:g}".format(r, getattr(self, r)) for r in regions
+                        if abs(getattr(self, r) - 1.0) > 1e-6)

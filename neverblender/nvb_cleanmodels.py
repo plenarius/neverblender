@@ -7,7 +7,9 @@ line tool (version 4.5.1 or later) it uses it to:
   the game install), and ASCII models are rewritten in cleanmodels' canonical
   form, which absorbs malformed or hand-edited input;
 - check exported models and list the findings (Scene properties);
-- optionally compile exported models to binary.
+- optionally compile exported models to binary;
+- make a robe's, cloak's or armour part's versions for other races and
+  phenotypes (cleanmodels 4.7.0 or later; Scene properties).
 Anything that goes wrong here falls back to Neverblender's own behaviour.
 """
 
@@ -19,6 +21,7 @@ import subprocess
 import tempfile
 
 MIN_VERSION = (4, 5, 1)
+VARIANTS_VERSION = (4, 7, 0)
 _TIMEOUT = 300  # seconds per call; whole folders of models take a few seconds
 _VERSION_RE = re.compile(r"cleanmodels v(\d+)\.(\d+)\.(\d+)")
 _cache = {}  # path -> (mtime, version tuple or None)
@@ -154,3 +157,63 @@ def compile_to(path, ascii_path, out_path, game_dir=""):
         return False, [str(e)]
     lines = [ln.strip() for ln in (result.stdout + result.stderr).splitlines() if ln.strip()]
     return result.returncode == 0 and os.path.isfile(out_path), lines
+
+
+def _resource_args(game_dir="", resource_dir=""):
+    args = []
+    if game_dir:
+        args += ["--game-dir", game_dir]
+    if resource_dir:
+        args += ["--resource-dir", resource_dir]
+    return args
+
+
+def list_bodies(path, mdl_path, game_dir="", resource_dir=""):
+    """Return (bodies, error): the bodies mdl_path would get variants for,
+    as dicts from cleanmodels variants --list-bodies --json (the source body
+    has "source": true), or None and the reason it cannot have variants."""
+    args = ["variants", "--list-bodies", "--json"] + _resource_args(game_dir, resource_dir)
+    try:
+        result = _run(path, args + [mdl_path])
+    except (OSError, subprocess.SubprocessError) as e:
+        return None, str(e)
+    if result.returncode != 0:
+        return None, _strip_prefix(result.stderr or result.stdout, mdl_path)
+    try:
+        return json.loads(result.stdout), ""
+    except ValueError:
+        return None, _strip_prefix(result.stderr or result.stdout, mdl_path)
+
+
+def _strip_prefix(text, mdl_path):
+    """Shorten "cleanmodels: /tmp/.../x.mdl: message" to "message"."""
+    text = text.strip().splitlines()[-1] if text.strip() else "cleanmodels failed"
+    for prefix in ("cleanmodels: ", mdl_path + ": "):
+        if text.startswith(prefix):
+            text = text[len(prefix):]
+    return text
+
+
+def start_variants(path, mdl_path, out_dir, bodies=(), width=1.0, length=1.0, shape="",
+                   compile_binary=False, overwrite=False, preview_dir="",
+                   game_dir="", resource_dir=""):
+    """Start cleanmodels variants and return the process. Its stdout is NDJSON:
+    one "source" event, then "start" and "done" per variant (done carries
+    output, and preview/body when preview_dir is given), then "summary"."""
+    args = ["variants", "--json-lines"] + _resource_args(game_dir, resource_dir)
+    if bodies:
+        args += ["--to", ",".join(bodies)]
+    if abs(width - 1.0) > 1e-6:
+        args += ["--width", "{:g}".format(width)]
+    if abs(length - 1.0) > 1e-6:
+        args += ["--length", "{:g}".format(length)]
+    if shape:
+        args += ["--shape", shape]
+    if compile_binary:
+        args.append("--compile")
+    if overwrite:
+        args.append("--overwrite")
+    if preview_dir:
+        args += ["--preview-dir", preview_dir]
+    return subprocess.Popen([path] + args + [mdl_path, out_dir], stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE, text=True)

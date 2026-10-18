@@ -88,6 +88,14 @@ path in the add-on preferences, or anywhere on your `PATH`), it also:
   with a button that selects the object each finding is about;
 - **compiles exported models** to game-ready binaries (*Compile with
   cleanmodels*, off by default; walkmeshes stay ASCII).
+- **makes variants** (cleanmodels 4.7.0 or later): *Scene properties >
+  cleanmodels Variants* fits the selected robe, cloak or armour part
+  (named for its body, like `pmh0_robe003` or `pfe0_chest050`) to the other
+  races and phenotypes of its gender and writes `pmd0_robe003.mdl` and so on
+  to the output folder. *Find Bodies* lists the bodies so you can pick some;
+  *Fit* loosens, lengthens or reshapes the fit by region; *Show on Bodies*
+  imports each variant on its body into a *Variants* collection, one row per
+  race, to check the fit before using the files.
 
 Without cleanmodels, binary models use the built-in decompiler. It names the
 bones of skinned body parts (`pmh0_neck001` and the like) after the part's own
