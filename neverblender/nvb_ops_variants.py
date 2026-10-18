@@ -57,6 +57,19 @@ def has_dry_run(cm_path):
     return bool(version) and version >= nvb_cleanmodels.DRY_RUN_VERSION
 
 
+def body_list_inputs(context):
+    """What Find Bodies' fit and existing-file columns depend on."""
+    settings = context.scene.nvb_cm_variants
+    game_dir, resource_dirs = resource_args(context)
+    return "|".join([bpy.path.abspath(settings.output_dir), str(settings.overwrite), game_dir] + resource_dirs)
+
+
+def body_list_stale(context):
+    """Whether the output folder or resources changed since Find Bodies."""
+    settings = context.scene.nvb_cm_variants
+    return bool(settings.bodies) and settings.bodies_inputs != body_list_inputs(context)
+
+
 def active_adjusts(settings):
     """The fit settings that change at least one chosen variant, or None if unknown."""
     chosen = [b for b in settings.bodies if b.use and b.learned_from >= 0]
@@ -148,6 +161,7 @@ class NVB_OT_cm_variants_bodies(bpy.types.Operator):
             self.report({'ERROR'}, error)
             return {'CANCELLED'}
         fill_body_list(settings, mdl_base.name, bodies, plan)
+        settings.bodies_inputs = body_list_inputs(context)
         msg = "{}: {} bodies".format(mdl_base.name, len(settings.bodies))
         existing = sum(1 for b in settings.bodies if b.exists)
         if existing:

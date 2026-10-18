@@ -1245,6 +1245,8 @@ class NVB_PT_cm_variants(bpy.types.Panel):
         row.label(text="Bodies")
         row.operator("nvb.cm_variants_bodies", icon='FILE_REFRESH')
         if settings.bodies and settings.bodies_model == mdl_base.name:
+            if nvb_ops_variants.body_list_stale(context):
+                box.label(text="Output folder or resources changed: Find Bodies again", icon='ERROR')
             box.template_list("NVB_UL_cm_bodies", "", settings, "bodies",
                               settings, "bodies_index", rows=6)
             row = box.row(align=True)
