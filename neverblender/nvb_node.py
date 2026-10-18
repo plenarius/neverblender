@@ -406,6 +406,31 @@ class Trimesh(Node):
         bm.free()
         del bm
 
+    def clamp_faces(self, vertex_count):
+        """Return each face's vertex indices, clamped to the vertices there are.
+
+        Faces that use a vertex twice are dropped, here and from facedef (so
+        UVs, smoothing groups and materials stay in step). They have no area
+        and are invisible in game, but they crash Blender's custom normals
+        (normals_split_custom_set, Blender 4.1+): stock models have them
+        (c_wyvern_a's wyvern_skin has 4).
+        """
+        face_vert_ids = []
+        kept = []
+        for v in self.facedef:
+            v0 = min(max(0, v[0]), vertex_count - 1) if vertex_count > 0 else 0
+            v1 = min(max(0, v[1]), vertex_count - 1) if vertex_count > 0 else 0
+            v2 = min(max(0, v[2]), vertex_count - 1) if vertex_count > 0 else 0
+            if v0 == v1 or v1 == v2 or v0 == v2:
+                continue
+            face_vert_ids.append((v0, v1, v2))
+            kept.append(v)
+        if len(kept) != len(self.facedef):
+            print("Neverblender: {}: dropped {} face(s) that use a vertex twice".format(
+                self.name, len(self.facedef) - len(kept)))
+            self.facedef = kept
+        return face_vert_ids
+
     def create_blender_mesh(self, blen_name, options):
         """TODO: Doc."""
 
@@ -417,12 +442,7 @@ class Trimesh(Node):
 
         # Validate and clamp face vertex indices
         vertex_count = len(self.vertex_coords)
-        face_vert_ids = []
-        for v in self.facedef:
-            v0 = min(max(0, v[0]), vertex_count - 1) if vertex_count > 0 else 0
-            v1 = min(max(0, v[1]), vertex_count - 1) if vertex_count > 0 else 0
-            v2 = min(max(0, v[2]), vertex_count - 1) if vertex_count > 0 else 0
-            face_vert_ids.append((v0, v1, v2))
+        face_vert_ids = self.clamp_faces(vertex_count)
 
         face_cnt = len(face_vert_ids)
         if face_cnt == 0 or vertex_count == 0:
@@ -1678,12 +1698,7 @@ class Aabb(Trimesh):
 
         # Validate and clamp face vertex indices
         vertex_count = len(self.vertex_coords)
-        face_vert_ids = []
-        for v in self.facedef:
-            v0 = min(max(0, v[0]), vertex_count - 1) if vertex_count > 0 else 0
-            v1 = min(max(0, v[1]), vertex_count - 1) if vertex_count > 0 else 0
-            v2 = min(max(0, v[2]), vertex_count - 1) if vertex_count > 0 else 0
-            face_vert_ids.append((v0, v1, v2))
+        face_vert_ids = self.clamp_faces(vertex_count)
 
         face_cnt = len(face_vert_ids)
         if face_cnt == 0 or vertex_count == 0:

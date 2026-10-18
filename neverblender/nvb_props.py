@@ -1150,7 +1150,9 @@ class NVB_PG_object(bpy.types.PropertyGroup):
                        (nvb_def.Classification.GUI,
                         'Gui', 'Gui', 5),
                        (nvb_def.Classification.ITEM,
-                        'Item', 'Items or placeables', 6)
+                        'Item', 'Items or placeables', 6),
+                       (nvb_def.Classification.OTHER,
+                        'Other', 'Other (binary classification 0, as cleanmodels writes it)', 7)
                        ],
                 default=nvb_def.Classification.CHARACTER, options=set())
     supermodel: bpy.props.StringProperty(

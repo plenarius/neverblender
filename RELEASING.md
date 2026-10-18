@@ -10,6 +10,10 @@ a pull request. Release tags (`v*`) cannot be moved or deleted once pushed.
    here) and `doc_url` must still be right; Blender shows them in the
    add-on list. Settle anything left over for this release first.
    Open a pull request for it and merge it.
+   If the release check warns that cleanmodels has a newer decompiler, run
+   `scripts/vendor_cleanmodels.sh [TAG]` first: it copies cleanmodels'
+   `python/cleanmodels` into `neverblender/cleanmodels` (never edit that copy
+   by hand; cleanmodels' CI keeps it identical to the cleanmodels program).
 2. Run the release check on Blender 3.3, 3.6, 4.0, 4.5 and 5.2 (every model
    round-trips, exports match across versions, the tools work). It must pass.
 3. Tag the merged commit and push the tag:

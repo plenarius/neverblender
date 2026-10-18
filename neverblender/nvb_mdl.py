@@ -13,7 +13,7 @@ from . import nvb_node
 from . import nvb_anim
 from . import nvb_def
 from . import nvb_utils
-from . import nvb_decompile
+from . import cleanmodels
 from . import nvb_cleanmodels
 
 
@@ -194,6 +194,27 @@ class Mdl():
 
         return run_cmd
 
+    @staticmethod
+    def decompile_bundled(mdl_filepath, options):
+        """Decompile a binary MDL with the bundled cleanmodels decompiler.
+
+        Returns the ASCII cleanmodels would write, or None if the file is not
+        a readable binary model. Skinned body parts get their bone names from
+        the creature skeleton, looked up next to the model, then in the game
+        folder (the add-on preference, else the usual install locations).
+        """
+        with open(os.fsencode(mdl_filepath), 'rb') as f:
+            data = f.read()
+        dirs = cleanmodels.lookup_dirs(mdl_filepath, game_dir=options.cleanmodels_game_dir)
+        try:
+            model = cleanmodels.decompile(data, dirs)
+        except cleanmodels.DecompileError as e:
+            print(f"Neverblender: {os.path.basename(mdl_filepath)}: {e}")
+            return None
+        for w in model.warnings:
+            print(f"Neverblender: {os.path.basename(mdl_filepath)}: {w.node + ': ' if w.node else ''}{w.message}")
+        return cleanmodels.write(model)
+
     def parse_mdl(self, mdl_filepath, options):
         """Parse a single mdl file."""
         if options.cleanmodels_path:
@@ -205,21 +226,18 @@ class Mdl():
                 self.read_ascii_mdl(ascii_text, options)
                 return
         if Mdl.is_binary(mdl_filepath):
-            # Binary models need to be decompiled first
-            # Try built-in decompiler first, then fall back to external if configured
+            # Binary models need to be decompiled first: with the bundled
+            # copy of cleanmodels' decompiler (the same ASCII the cleanmodels
+            # program writes), then, failing that, an external decompiler.
             decompiled = False
-            
-            # Use built-in decompiler
             try:
-                print("Neverblender: Decompiling binary MDL using built-in decompiler...")
-                ascii_content = nvb_decompile.decompile(mdl_filepath)
+                ascii_content = Mdl.decompile_bundled(mdl_filepath, options)
                 if ascii_content:
                     self.read_ascii_mdl(ascii_content, options)
                     decompiled = True
-                    print("Neverblender: Binary MDL decompiled successfully.")
             except Exception as e:
-                print(f"Neverblender: Built-in decompiler failed: {e}")
-                
+                print(f"Neverblender: Decompiling {mdl_filepath} failed: {e}")
+
             # Fall back to external compiler if built-in failed and external is configured
             if not decompiled and options.compiler_use and os.path.isfile(options.compiler_path):
                 print("Neverblender: Trying external decompiler as fallback...")

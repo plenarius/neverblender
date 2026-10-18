@@ -238,13 +238,15 @@ class Animnode():
 
     def create_data_shape(self, obj, anim, animlength, options):
         """Import animated vertices as shapekeys."""
-        sample_cnt = int(animlength / self.sampleperiod) + 1
+        # The samples are as many as the data holds: the game stores one set
+        # of vertices per sample, which need not be length/period + 1 (a GUI
+        # frame stores a single sample for a 1s animation).
         vert_cnt = len(obj.data.vertices)
-        # Sanity Check
-        if len(self.animtverts) % sample_cnt > 0.0:
+        if vert_cnt == 0 or len(self.animverts) % vert_cnt != 0:
             print("Neverblender: WARNING - animvert sample size mismatch: " +
                   obj.name)
             return
+        sample_cnt = len(self.animverts) // vert_cnt
 
         fps = options.scene.render.fps
         frame_start = anim.frameStart
@@ -277,22 +279,33 @@ class Animnode():
 
     def create_data_uv(self, obj, anim, animlength, options):
         """Import animated texture coordinates."""
-        num_samples = int(animlength / self.sampleperiod) + 1
-        # Sanity Check
-        if len(self.animtverts) % num_samples > 0.0:
+        # One sample holds a coordinate per texture vertex the faces use (or,
+        # in compiled models, per vertex); the samples are as many as the data
+        # holds, which need not be length/period + 1.
+        face_uv_indices = [tuple(f[4:7]) for f in self.facedef]
+        face_uv_indices = unpack_list(face_uv_indices)
+        sample_size = 0
+        for size in (max(face_uv_indices, default=-1) + 1, len(obj.data.vertices)):
+            if size > 0 and len(self.animtverts) % size == 0 and size > max(face_uv_indices, default=-1):
+                sample_size = size
+                break
+        if not sample_size:
             print("Neverblender: WARNING - animtvert sample size mismatch: " +
                   obj.name)
             return
-        sample_size = int(len(self.animtverts) / num_samples)
         # Create uv layers
-        face_uv_indices = [tuple(f[4:7]) for f in self.facedef]
-        face_uv_indices = unpack_list(face_uv_indices)
         sample_fstr = 'animtverts.'+anim.name+'.{:d}'
         sampler = enumerate(zip(*[iter(self.animtverts)] * sample_size))
         for sample_idx, sample in sampler:
             face_uv_coords = [sample[i] for i in face_uv_indices]
             face_uv_coords = unpack_list(face_uv_coords)
             uv_layer = obj.data.uv_layers.new(do_init=False)
+            if uv_layer is None:
+                # Blender allows 8 UV maps per mesh; each sample is one
+                print("Neverblender: WARNING - {}: only the first {} of {} UV animation samples of {} fit in "
+                      "Blender's UV maps".format(obj.name, sample_idx, len(self.animtverts) // sample_size,
+                                                 anim.name))
+                break
             uv_layer.name = sample_fstr.format(sample_idx)
             try:
                 uv_layer.data.foreach_set('uv', face_uv_coords[:2*len(uv_layer.data)])
@@ -619,7 +632,8 @@ class Animnode():
             ascii_lines.append('    cliph 1.0')
 
             anim_length = (anim_end - anim_start) / fps
-            sample_period = anim_length / (num_samples - 1)
+            # A single sample spans the whole animation
+            sample_period = anim_length / max(num_samples - 1, 1)
             ascii_lines.append('    sampleperiod ' +
                             str(round(sample_period, 3)))
         # Create ascii representation and add it to the output
@@ -666,7 +680,8 @@ class Animnode():
             ascii_lines.append('    cliph 1.0')
 
             anim_length = (anim_end - anim_start) / fps
-            sample_period = anim_length / (num_samples - 1)
+            # A single sample spans the whole animation
+            sample_period = anim_length / max(num_samples - 1, 1)
             ascii_lines.append('    sampleperiod ' +
                                str(round(sample_period, 3)))
         # Create ascii representation and add it to the output

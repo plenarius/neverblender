@@ -523,9 +523,10 @@ class NVB_OT_mdlimport(bpy.types.Operator, bpy_extras.io_utils.ImportHelper):
         options.compiler_use = addon_prefs.import_compiler_use
         options.compiler_path = addon_prefs.import_compiler_path
         options.compiler_command = addon_prefs.import_compiler_command
+        # The game folder is also where the bundled decompiler finds stock skeletons
+        options.cleanmodels_game_dir = bpy.path.abspath(addon_prefs.cleanmodels_game_dir)
         if addon_prefs.cleanmodels_import:
             options.cleanmodels_path, _ = nvb_cleanmodels.find_from_prefs(addon_prefs)
-            options.cleanmodels_game_dir = bpy.path.abspath(addon_prefs.cleanmodels_game_dir)
         # Geometry options
         options.geom_import = self.import_geometry
         options.geom_walkmesh = self.import_walkmesh
@@ -640,9 +641,10 @@ class NVB_OT_mdl_superimport(bpy.types.Operator, bpy_extras.io_utils.ImportHelpe
         options.compiler_use = addon_prefs.import_compiler_use
         options.compiler_path = addon_prefs.import_compiler_path
         options.compiler_command = addon_prefs.import_compiler_command
+        # The game folder is also where the bundled decompiler finds stock skeletons
+        options.cleanmodels_game_dir = bpy.path.abspath(addon_prefs.cleanmodels_game_dir)
         if addon_prefs.cleanmodels_import:
             options.cleanmodels_path, _ = nvb_cleanmodels.find_from_prefs(addon_prefs)
-            options.cleanmodels_game_dir = bpy.path.abspath(addon_prefs.cleanmodels_game_dir)
         # Animations (duh)
         options.anim_import = True
         options.anim_fps_use = self.anim_fps_use
