@@ -40,6 +40,7 @@ from . import nvb_ops_anim
 from . import nvb_ops_set
 from . import nvb_ops_amt
 from . import nvb_ops_node
+from . import nvb_ops_variants
 from . import nvb_plt
 from . import nvb_plt_autoreload
 from . import nvb_dds
@@ -72,6 +73,7 @@ if 'bpy' in locals():
         importlib.reload(nvb_ops_set)
         importlib.reload(nvb_ops_amt)
         importlib.reload(nvb_ops_node)
+        importlib.reload(nvb_ops_variants)
         importlib.reload(nvb_plt)
         importlib.reload(nvb_plt_autoreload)
         importlib.reload(nvb_dds)
@@ -104,6 +106,13 @@ neverblender_classes = (
     nvb_ops.NVB_OT_cm_clear_findings,
     nvb_ui.NVB_UL_cmfindings,
     nvb_ui.NVB_PT_cleanmodels,
+    nvb_props.NVB_PG_cm_body,
+    nvb_props.NVB_PG_cm_variants,
+    nvb_ops_variants.NVB_OT_cm_variants_bodies,
+    nvb_ops_variants.NVB_OT_cm_variants_select,
+    nvb_ops_variants.NVB_OT_cm_variants,
+    nvb_ui.NVB_UL_cm_bodies,
+    nvb_ui.NVB_PT_cm_variants,
     nvb_props.NVB_PG_set_element,
     nvb_props.NVB_PG_animevent,
     nvb_props.NVB_PG_amt_event,
@@ -241,6 +250,8 @@ def register():
     bpy.types.Scene.nvb_cm_findings = \
         bpy.props.CollectionProperty(type=nvb_props.NVB_PG_cmfinding)
     bpy.types.Scene.nvb_cm_findings_index = bpy.props.IntProperty()
+    bpy.types.Scene.nvb_cm_variants = \
+        bpy.props.PointerProperty(type=nvb_props.NVB_PG_cm_variants)
 
     bpy.types.TOPBAR_MT_file_import.append(menu_func_import)
     bpy.types.TOPBAR_MT_file_export.append(menu_func_export)
@@ -267,6 +278,7 @@ def unregister():
     for cl in reversed(neverblender_classes):
         bpy.utils.unregister_class(cl)
 
+    del bpy.types.Scene.nvb_cm_variants
     del bpy.types.Scene.nvb_cm_findings_index
     del bpy.types.Scene.nvb_cm_findings
     del bpy.types.Object.nvb

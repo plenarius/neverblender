@@ -7,6 +7,7 @@ import bpy
 from . import nvb_ops
 from . import nvb_ops_set
 from . import nvb_ops_anim
+from . import nvb_ops_variants
 
 from . import nvb_def
 from . import nvb_utils
@@ -1182,3 +1183,73 @@ class NVB_PT_cleanmodels(bpy.types.Panel):
             if line:
                 col.label(text=line)
         layout.operator("nvb.cm_clear_findings", icon='X')
+
+
+class NVB_UL_cm_bodies(bpy.types.UIList):
+    """Bodies cleanmodels can make variants for."""
+
+    def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):
+        row = layout.row(align=True)
+        row.prop(item, "use", text="")
+        row.label(text="{}  {} {}".format(item.name, item.race, item.phenotype_name))
+        if item.same_shape:
+            row.label(text="= " + item.same_shape)
+
+
+class NVB_PT_cm_variants(bpy.types.Panel):
+    """Make a robe's, cloak's or armour part's variants with cleanmodels."""
+
+    bl_label = "cleanmodels Variants"
+    bl_space_type = 'PROPERTIES'
+    bl_region_type = 'WINDOW'
+    bl_context = 'scene'
+    bl_options = {'DEFAULT_CLOSED'}
+
+    def draw(self, context):
+        layout = self.layout
+        settings = context.scene.nvb_cm_variants
+        mdl_base = nvb_ops_variants.get_model(context)
+        cm_path, error = nvb_ops_variants.get_cleanmodels(context)
+        if not cm_path:
+            layout.label(text=error, icon='INFO')
+            return
+        if not mdl_base:
+            layout.label(text="Select a robe, cloak or armour part", icon='INFO')
+            return
+        layout.label(text="Model: " + mdl_base.name, icon='OUTLINER_OB_ARMATURE')
+
+        # Bodies
+        box = layout.box()
+        row = box.row()
+        row.label(text="Bodies")
+        row.operator("nvb.cm_variants_bodies", icon='FILE_REFRESH')
+        if settings.bodies and settings.bodies_model == mdl_base.name:
+            box.template_list("NVB_UL_cm_bodies", "", settings, "bodies",
+                              settings, "bodies_index", rows=6)
+            row = box.row(align=True)
+            row.operator("nvb.cm_variants_select", text="All").action = 'ALL'
+            row.operator("nvb.cm_variants_select", text="None").action = 'NONE'
+        else:
+            box.label(text="Every body of the model's gender (Find Bodies to choose)")
+
+        # Fit
+        box = layout.box()
+        box.label(text="Fit")
+        row = box.row(align=True)
+        row.prop(settings, "width")
+        row.prop(settings, "length")
+        col = box.column(align=True)
+        for region in ("shoulders", "chest", "waist", "hips", "hem"):
+            col.prop(settings, region)
+
+        # Output
+        box = layout.box()
+        box.label(text="Output")
+        box.prop(settings, "output_dir")
+        box.prop(settings, "resource_dir")
+        row = box.row()
+        row.prop(settings, "compile_binary")
+        row.prop(settings, "overwrite")
+        box.prop(settings, "previews")
+
+        layout.operator("nvb.cm_variants", icon='MOD_CLOTH')
