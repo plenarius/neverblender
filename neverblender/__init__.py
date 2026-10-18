@@ -175,11 +175,13 @@ neverblender_classes = (
     nvb_ui.NVB_UL_lensflares,
     nvb_ui.NVB_UL_anims,
     nvb_ui.NVB_UL_anim_events,
+    nvb_ui.NVB_UL_amt_events,
     nvb_ui.NVB_UL_mtr_params,
 
     nvb_ui.NVB_PT_aurorabase,
     nvb_ui.NVB_PT_dummy,
     nvb_ui.NVB_PT_armature,
+    nvb_ui.NVB_PT_amt_events,
     nvb_ui.NVB_PT_set,
     nvb_ui.NVB_PT_mtr,
     nvb_ui.NVB_PT_lamp_data,
