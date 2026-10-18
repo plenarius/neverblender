@@ -106,7 +106,7 @@ def fill_body_list(settings, mdl_name, bodies, plan=None):
         variant = plan.get(item.name)
         if variant:
             item.learned_from = variant.get("learnedFrom", 0)
-            item.exists = not variant.get("action", "write").startswith("write")
+            item.exists = variant.get("action") in ("replace", "skip")
             item.adjusts = ",".join(variant.get("adjusts") or [])
     settings.bodies_model = mdl_name
     settings.bodies_index = 0

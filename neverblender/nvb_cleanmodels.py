@@ -232,7 +232,7 @@ def start_variants(path, mdl_path, out_dir, bodies=(), width=1.0, length=1.0, sh
 def dry_run(path, mdl_path, out_dir, overwrite=False, game_dir="", resource_dir=""):
     """cleanmodels variants --dry-run (4.8.0 or later). Returns (variants, error):
     per variant a dict with target, file, action ("write", "replace" or
-    "skip: <reason>"), adjusts (the fit settings that change it) and
+    "skip", with the reason in reason), adjusts (the fit settings that change it) and
     learnedFrom (existing pairs its fit was learned from; absent when measured)."""
     args = ["variants", "--dry-run", "--json"] + _variants_args(
         overwrite=overwrite, game_dir=game_dir, resource_dir=resource_dir)
