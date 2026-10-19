@@ -11,6 +11,10 @@ line tool (version 4.5.1 or later) it uses it to:
 - make a robe's, cloak's or armour part's versions for other races and
   phenotypes (cleanmodels 4.7.0 or later; Scene properties).
 Anything that goes wrong here falls back to Neverblender's own behaviour.
+
+Without the program, Neverblender's copy of cleanmodels' Python port
+(neverblender/cleanmodels) decompiles binary models on import (nvb_mdl) and
+compiles exported ones (compile_bundled), with the same results.
 """
 
 import json
