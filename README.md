@@ -58,6 +58,18 @@ Everything in Neverblender 4.0 (the last Neverwinter Vault release), plus:
 - **Binary models import directly**, with cleanmodels' decompiler built in:
   the same model the cleanmodels program reads, emitters, animated meshes and
   skinned body parts included, with or without cleanmodels installed.
+- **Import warnings are shown** in Blender (a popup and the Info editor), not
+  only in the system console: what the decompiler warns about (a skin whose
+  vertices have no bone weights, a skeleton that isn't found, ...), and a
+  model or walkmesh that can't be read.
+- **Animated meshes (animmesh)** import whole: every sample, whatever the
+  animation length. Vertex samples are shape keys, as before; UV samples are
+  mesh attributes named `animtverts.<animation>.<sample>` (face corner,
+  vector: u, v, 0; *Object Data properties > Attributes*), so there is no
+  limit of 8 as with UV maps. Files saved by older versions, which have them as
+  UV maps, still export. Each animation's sample period is kept on the mesh
+  (custom property `sampleperiod.<animation>`) and written back unless its
+  shape key samples were moved.
 - **PLT textures**: *File > Import / Export > NWN PLT Texture (.plt)*, and
   *Image > Setup PLT Layer Images* in the image editor; an optional autoreload
   of PLT files changed on disk (add-on preferences).
@@ -70,7 +82,10 @@ Everything in Neverblender 4.0 (the last Neverwinter Vault release), plus:
   model scaled for each race and gender.
 - Armature tools: *Update Animation*, hook skinmeshes, world coordinates.
 - Fixes: importing a model a second time in one session no longer fails;
-  the external decompiler setting works with cleanmodels 4.
+  the external decompiler setting works with cleanmodels 4; models with stray
+  `node` lines, empty emitter values or a face that uses a vertex twice import
+  (checked on the game's own models); MTR files with accented characters
+  import on Linux and macOS.
 
 cleanmodels (optional)
 ----------------------

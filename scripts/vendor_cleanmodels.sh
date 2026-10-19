@@ -1,5 +1,5 @@
 #!/bin/sh
-# vendor_cleanmodels.sh [REF]: copy cleanmodels' Python decompiler (python/cleanmodels in
+# vendor_cleanmodels.sh [REF]: copy cleanmodels' Python port (python/cleanmodels in
 # github.com/plenarius/cleanmodels) at REF (a tag or commit; default: origin/main) into
 # neverblender/cleanmodels/, and record where it came from in neverblender/cleanmodels/VENDORED.
 # Never edit the copy by hand: change cleanmodels, then run this again.
