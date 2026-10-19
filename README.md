@@ -38,7 +38,8 @@ One release works on all of these; each release is tested on:
 
 The test round-trips models (a skinned and animated creature, a placeable with
 an emitter, a tile with its walkmesh, ...) through import and export in each
-version and compares the results, and exercises the tools below. Exports from
+version and compares the results, and exercises the tools below. Binary models
+must import exactly as the cleanmodels program reads them. Exports from
 3.6, 4.x and 5.x are identical; 3.3's differ only in the last decimals of some
 rotations.
 
