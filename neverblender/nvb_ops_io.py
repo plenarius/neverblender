@@ -229,9 +229,11 @@ class NVB_OT_mdlexport(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
         """Draw the export UI."""
         layout = self.layout
         addon_prefs = context.preferences.addons[__package__].preferences
+        # Compiling works without the cleanmodels program (the built-in copy
+        # of its compiler); checking needs it
         box = layout.box()
-        box.label(text='cleanmodels')
         if nvb_cleanmodels.find_from_prefs(addon_prefs)[0]:
+            box.label(text='cleanmodels')
             box.prop(self, 'cleanmodels_check')
         box.prop(self, 'cleanmodels_compile')
         # Misc Export Settings
@@ -309,10 +311,11 @@ class NVB_OT_mdlexport(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
             n = nvb_utils.store_cleanmodels_findings(context.scene, options.cleanmodels_findings)
             worst = {f["severity"] for f in options.cleanmodels_findings}
             level = {'ERROR'} if worst & {"error", "fatal"} else {'WARNING'} if "warning" in worst else {'INFO'}
-            done = "compiled" if options.cleanmodels_compile else "checked"
-            if not options.cleanmodels_path:
-                done += " (built-in compiler)"
-            self.report(level, "cleanmodels {}: {} finding(s), see Scene properties > cleanmodels".format(done, n))
+            if options.cleanmodels_path:
+                done = "cleanmodels " + ("compiled" if options.cleanmodels_compile else "checked")
+            else:
+                done = "Compiled to binary (built-in compiler)"
+            self.report(level, "{}: {} finding(s), see Scene properties > cleanmodels".format(done, n))
         return result
 
     def invoke(self, context, event):
