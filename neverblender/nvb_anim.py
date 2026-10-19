@@ -73,8 +73,7 @@ class Animation():
 
     def loadAsciiAnimNodes(self, ascii_data):
         """TODO: DOC."""
-        dlm = 'node '
-        node_list = [dlm + s for s in ascii_data.split(dlm) if s != '']
+        node_list = nvb_utils.split_ascii_nodes(ascii_data)
         for idx, ascii_node in enumerate(node_list):
             ascii_lines = [l.strip().split() for l in ascii_node.splitlines()]
             node = nvb_animnode.Animnode()
@@ -83,7 +82,7 @@ class Animation():
 
     def loadAscii(self, ascii_data):
         """Load an animation from a block from an ascii mdl file."""
-        animNodesStart = ascii_data.find('node ')
+        animNodesStart = nvb_utils.find_ascii_line(ascii_data, 'node')
         if (animNodesStart > -1):
             self.loadAsciiAnimHeader(ascii_data[:animNodesStart-1])
             self.loadAsciiAnimNodes(ascii_data[animNodesStart:])

@@ -88,21 +88,39 @@ def _run(path, args):
     return subprocess.run([path] + args, capture_output=True, text=True, timeout=_TIMEOUT)
 
 
-def to_ascii(path, mdl_path, game_dir=""):
+def to_ascii(path, mdl_path, game_dir="", warnings=None):
     """Return the model at mdl_path as cleanmodels' canonical ASCII, or None.
 
     The model is read where it is, so its own folder is searched for
-    supermodels, skeletons and capart.2da.
+    supermodels, skeletons and capart.2da. Its decompile and parse warnings,
+    and why it could not be read, are added to warnings (a list) as text.
     """
+    name = os.path.basename(mdl_path)
     tmp_dir = tempfile.mkdtemp(prefix="nvb_cm_")
     try:
-        out_path = os.path.join(tmp_dir, os.path.basename(mdl_path))
-        args = ["decompile", "--quiet", "--overwrite"]
+        out_path = os.path.join(tmp_dir, name)
+        args = ["decompile", "--json-lines", "--overwrite"]
         if game_dir:
             args += ["--game-dir", game_dir]
         result = _run(path, args + [mdl_path, out_path])
+        error = ""
+        for line in result.stdout.splitlines():
+            try:
+                ev = json.loads(line)
+            except ValueError:
+                continue
+            if ev.get("type") != "done":
+                continue
+            res = ev.get("result", {})
+            error = res.get("error", "")
+            for w in res.get("warnings") or []:
+                node = w.get("node", "")
+                _warn(warnings, name + ": " + (node + ": " if node else "") + w.get("message", ""))
+            for w in res.get("parse_warnings") or []:
+                _warn(warnings, name + ": " + w)
         if result.returncode != 0 or not os.path.isfile(out_path):
-            print("Neverblender: cleanmodels could not read " + mdl_path + ": " + (result.stderr or result.stdout).strip()[:300])
+            print("Neverblender: cleanmodels could not read " + mdl_path + ": " +
+                  (error or result.stderr or result.stdout).strip()[:300])
             return None
         with open(out_path, "r", encoding="latin-1") as f:
             return f.read()
@@ -111,6 +129,12 @@ def to_ascii(path, mdl_path, game_dir=""):
         return None
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+def _warn(warnings, text):
+    print("Neverblender: " + text)
+    if warnings is not None:
+        warnings.append(text)
 
 
 def check(path, mdl_path, game_dir=""):

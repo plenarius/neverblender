@@ -15,6 +15,18 @@ from . import nvb_utils
 from . import nvb_cleanmodels
 
 
+
+def report_import_warnings(operator, options, shown=10):
+    """Show what the import found wrong (decompile warnings, models that
+    could not be read) in Blender's status bar and Info editor."""
+    if not options.warnings:
+        return
+    for text in options.warnings[:shown]:
+        operator.report({'WARNING'}, text)
+    more = len(options.warnings) - shown
+    operator.report({'WARNING'}, "Import: {} warning(s){}, see the Info editor or the system console".format(
+        len(options.warnings), " ({} more in the console)".format(more) if more > 0 else ""))
+
 class NVB_OT_mdlexport(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
     """Export Aurora Engine model (.mdl)"""
 
@@ -168,7 +180,7 @@ class NVB_OT_mdlexport(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
             # Export MDL
             ascii_lines = []
             nvb_mdl.Mdl.generate_ascii(mdl_base, ascii_lines, options)
-            with open(os.fsencode(options.filepath), 'w', newline='\r\n') as f:
+            with open(os.fsencode(options.filepath), 'w', newline='\r\n', encoding='latin-1', errors='replace') as f:
                 f.write('\n'.join(ascii_lines))
             self.cleanmodels_after_export(options)
             # Export walkmesh for MDL
@@ -180,14 +192,14 @@ class NVB_OT_mdlexport(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
                                                wkm_type, options)
                 if ascii_lines:
                     wkm_path = get_filepath(mdl_path, wkm_name, wkm_ext)
-                    with open(os.fsencode(wkm_path), 'w', newline='\r\n') as f:
+                    with open(os.fsencode(wkm_path), 'w', newline='\r\n', encoding='latin-1', errors='replace') as f:
                         f.write('\n'.join(ascii_lines))
         # Export MTRs
         for mtr_name, blen_mat_name in options.mtr_list:
             blen_mat = bpy.data.materials[blen_mat_name]
             ascii_lines = nvb_mtr.Mtr.generate_ascii(blen_mat, options)
             mtr_path = get_filepath(options.filepath, mtr_name, '.mtr')
-            with open(os.fsencode(mtr_path), 'w', newline='\r\n') as f:
+            with open(os.fsencode(mtr_path), 'w', newline='\r\n', encoding='latin-1', errors='replace') as f:
                 f.write('\n'.join(ascii_lines))
         return {'FINISHED'}
 
@@ -463,7 +475,7 @@ class NVB_OT_mdlimport(bpy.types.Operator, bpy_extras.io_utils.ImportHelper):
             # Single file => NEVER overwrite locations
             if self.filepath:
                 load_file(context, self.filepath, options)
-
+        report_import_warnings(self, options)
         return {'FINISHED'}
 
     def draw(self, context):
@@ -523,9 +535,10 @@ class NVB_OT_mdlimport(bpy.types.Operator, bpy_extras.io_utils.ImportHelper):
         options.compiler_use = addon_prefs.import_compiler_use
         options.compiler_path = addon_prefs.import_compiler_path
         options.compiler_command = addon_prefs.import_compiler_command
+        # The game folder is also where the bundled decompiler finds stock skeletons
+        options.cleanmodels_game_dir = bpy.path.abspath(addon_prefs.cleanmodels_game_dir)
         if addon_prefs.cleanmodels_import:
             options.cleanmodels_path, _ = nvb_cleanmodels.find_from_prefs(addon_prefs)
-            options.cleanmodels_game_dir = bpy.path.abspath(addon_prefs.cleanmodels_game_dir)
         # Geometry options
         options.geom_import = self.import_geometry
         options.geom_walkmesh = self.import_walkmesh
@@ -606,6 +619,7 @@ class NVB_OT_mdl_superimport(bpy.types.Operator, bpy_extras.io_utils.ImportHelpe
             options.anim_scale = mdl_base.nvb.animscale
         for filepath in pathlist:
             load_file(filepath, mdl_base, options)
+        report_import_warnings(self, options)
         return {'FINISHED'}
 
     @classmethod
@@ -640,9 +654,10 @@ class NVB_OT_mdl_superimport(bpy.types.Operator, bpy_extras.io_utils.ImportHelpe
         options.compiler_use = addon_prefs.import_compiler_use
         options.compiler_path = addon_prefs.import_compiler_path
         options.compiler_command = addon_prefs.import_compiler_command
+        # The game folder is also where the bundled decompiler finds stock skeletons
+        options.cleanmodels_game_dir = bpy.path.abspath(addon_prefs.cleanmodels_game_dir)
         if addon_prefs.cleanmodels_import:
             options.cleanmodels_path, _ = nvb_cleanmodels.find_from_prefs(addon_prefs)
-            options.cleanmodels_game_dir = bpy.path.abspath(addon_prefs.cleanmodels_game_dir)
         # Animations (duh)
         options.anim_import = True
         options.anim_fps_use = self.anim_fps_use
@@ -970,7 +985,7 @@ class NVB_OT_phenotype_batch_export(bpy.types.Operator, bpy_extras.io_utils.Expo
         # Export MDL
         ascii_lines = []
         nvb_mdl.Mdl.generate_ascii(mdl_base, ascii_lines, options)
-        with open(os.fsencode(filepath), 'w', newline='\r\n') as f:
+        with open(os.fsencode(filepath), 'w', newline='\r\n', encoding='latin-1', errors='replace') as f:
             f.write('\n'.join(ascii_lines))
 
         # Export walkmesh
@@ -983,7 +998,7 @@ class NVB_OT_phenotype_batch_export(bpy.types.Operator, bpy_extras.io_utils.Expo
             if ascii_lines:
                 wkm_name = os.path.splitext(os.path.basename(filepath))[0]
                 wkm_path = self.get_filepath(filepath, wkm_name, wkm_ext)
-                with open(os.fsencode(wkm_path), 'w', newline='\r\n') as f:
+                with open(os.fsencode(wkm_path), 'w', newline='\r\n', encoding='latin-1', errors='replace') as f:
                     f.write('\n'.join(ascii_lines))
 
     def execute(self, context):
@@ -1379,7 +1394,7 @@ class NVB_OT_setexport(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
                                                  self.grass_density,
                                                  self.grass_height)
 
-        with open(os.fsencode(self.filepath), 'w', newline='\r\n') as f:
+        with open(os.fsencode(self.filepath), 'w', newline='\r\n', encoding='latin-1', errors='replace') as f:
             f.write('\n'.join(ascii_setfile))
 
         return {'FINISHED'}

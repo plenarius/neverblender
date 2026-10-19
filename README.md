@@ -38,7 +38,8 @@ One release works on all of these; each release is tested on:
 
 The test round-trips models (a skinned and animated creature, a placeable with
 an emitter, a tile with its walkmesh, ...) through import and export in each
-version and compares the results, and exercises the tools below. Exports from
+version and compares the results, and exercises the tools below. Binary models
+must import exactly as the cleanmodels program reads them. Exports from
 3.6, 4.x and 5.x are identical; 3.3's differ only in the last decimals of some
 rotations.
 
@@ -55,7 +56,21 @@ Everything in Neverblender 4.0 (the last Neverwinter Vault release), plus:
   extruding or subdividing take the group of the face they came from.
 - **Positions with 7 decimals** instead of 5: thin, two-sided meshes no
   longer shade differently after a round trip.
-- **Binary models import directly**, with a built-in decompiler (SpacePope).
+- **Binary models import directly**, with cleanmodels' decompiler built in:
+  the same model the cleanmodels program reads, emitters, animated meshes and
+  skinned body parts included, with or without cleanmodels installed.
+- **Import warnings are shown** in Blender (a popup and the Info editor), not
+  only in the system console: what the decompiler warns about (a skin whose
+  vertices have no bone weights, a skeleton that isn't found, ...), and a
+  model or walkmesh that can't be read.
+- **Animated meshes (animmesh)** import whole: every sample, whatever the
+  animation length. Vertex samples are shape keys, as before; UV samples are
+  mesh attributes named `animtverts.<animation>.<sample>` (face corner,
+  vector: u, v, 0; *Object Data properties > Attributes*), so there is no
+  limit of 8 as with UV maps. Files saved by older versions, which have them as
+  UV maps, still export. Each animation's sample period is kept on the mesh
+  (custom property `sampleperiod.<animation>`) and written back unless its
+  shape key samples were moved.
 - **PLT textures**: *File > Import / Export > NWN PLT Texture (.plt)*, and
   *Image > Setup PLT Layer Images* in the image editor; an optional autoreload
   of PLT files changed on disk (add-on preferences).
@@ -68,7 +83,10 @@ Everything in Neverblender 4.0 (the last Neverwinter Vault release), plus:
   model scaled for each race and gender.
 - Armature tools: *Update Animation*, hook skinmeshes, world coordinates.
 - Fixes: importing a model a second time in one session no longer fails;
-  the external decompiler setting works with cleanmodels 4.
+  the external decompiler setting works with cleanmodels 4; models with stray
+  `node` lines, empty emitter values or a face that uses a vertex twice import
+  (checked on the game's own models); MTR files with accented characters
+  import on Linux and macOS.
 
 cleanmodels (optional)
 ----------------------
@@ -105,9 +123,12 @@ path in the add-on preferences, or anywhere on your `PATH`), it also:
   Bodies* lists every body in the game install and the resources, without
   selecting a model, and marks the ones only the resources have.
 
-Without cleanmodels, binary models use the built-in decompiler. It names the
-bones of skinned body parts (`pmh0_neck001` and the like) after the part's own
-nodes instead of the creature skeleton's, so for those, use cleanmodels.
+Without cleanmodels, binary models are read by a copy of cleanmodels'
+decompiler that ships with Neverblender (`neverblender/cleanmodels`, from the
+cleanmodels repository, where CI checks it gives the same output as the
+cleanmodels program). Skinned body parts (`pmh0_neck001` and the like) get their
+bone names from the creature skeleton: next to the model, or in the game folder
+(*Game folder* in the preferences, or the usual install locations).
 
 Reporting problems
 ------------------
@@ -125,7 +146,8 @@ Credits
   [mdltools](https://github.com/gyoerkaa/mdltools) repository up to 2.8.48,
   then his Vault releases 2.8.51 and 4.0 (code he did not push to GitHub),
   each imported unchanged. He agreed to it being continued here.
-- **SpacePope** ported it to Blender 5.0 and added the built-in decompiler,
+- **SpacePope** ported it to Blender 5.0 and added a built-in decompiler (since
+  replaced by cleanmodels'),
   the PLT tools, Export Phenotypes and the armature tool changes, imported
   unchanged from the version they shared. Used with their permission; they
   do not support it, so report problems here.

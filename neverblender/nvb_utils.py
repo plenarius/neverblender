@@ -1514,3 +1514,29 @@ def mix_clamp(node):
         node.clamp_result = True
     else:
         node.use_clamp = True
+
+
+def find_ascii_line(ascii_block, keyword):
+    """Index of the first line whose first word is keyword (any case), or -1.
+    A plain find() also hits the word inside other lines: stock tnp_wndw_a01
+    has the comment "#local file: windows_node fixed.max"."""
+    m = re.search(r'^[ \t]*' + keyword + r'[ \t]', ascii_block, re.MULTILINE | re.IGNORECASE)
+    return m.start() if m else -1
+
+
+def split_ascii_nodes(ascii_block):
+    """Split the nodes of a geometry or animation block: each starts at a
+    line "node <type> <name>". Lines "node" without a type and name (stock
+    c_quiver has "node pos=[...]", exporter debug output) are skipped, as
+    cleanmodels does; text before the first node is ignored."""
+    blocks = []
+    for line in ascii_block.splitlines():
+        tokens = line.split()
+        if tokens and tokens[0].lower() == 'node':
+            if len(tokens) < 3:
+                print("Neverblender: WARNING - skipped a node line without a type and name: " + line.strip())
+                continue
+            blocks.append([line])
+        elif blocks:
+            blocks[-1].append(line)
+    return ['\n'.join(b) for b in blocks]

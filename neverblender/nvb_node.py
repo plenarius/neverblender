@@ -406,6 +406,31 @@ class Trimesh(Node):
         bm.free()
         del bm
 
+    def clamp_faces(self, vertex_count):
+        """Return each face's vertex indices, clamped to the vertices there are.
+
+        Faces that use a vertex twice are dropped, here and from facedef (so
+        UVs, smoothing groups and materials stay in step). They have no area
+        and are invisible in game, but they crash Blender's custom normals
+        (normals_split_custom_set, Blender 4.1+): stock models have them
+        (c_wyvern_a's wyvern_skin has 4).
+        """
+        face_vert_ids = []
+        kept = []
+        for v in self.facedef:
+            v0 = min(max(0, v[0]), vertex_count - 1) if vertex_count > 0 else 0
+            v1 = min(max(0, v[1]), vertex_count - 1) if vertex_count > 0 else 0
+            v2 = min(max(0, v[2]), vertex_count - 1) if vertex_count > 0 else 0
+            if v0 == v1 or v1 == v2 or v0 == v2:
+                continue
+            face_vert_ids.append((v0, v1, v2))
+            kept.append(v)
+        if len(kept) != len(self.facedef):
+            print("Neverblender: {}: dropped {} face(s) that use a vertex twice".format(
+                self.name, len(self.facedef) - len(kept)))
+            self.facedef = kept
+        return face_vert_ids
+
     def create_blender_mesh(self, blen_name, options):
         """TODO: Doc."""
 
@@ -417,12 +442,7 @@ class Trimesh(Node):
 
         # Validate and clamp face vertex indices
         vertex_count = len(self.vertex_coords)
-        face_vert_ids = []
-        for v in self.facedef:
-            v0 = min(max(0, v[0]), vertex_count - 1) if vertex_count > 0 else 0
-            v1 = min(max(0, v[1]), vertex_count - 1) if vertex_count > 0 else 0
-            v2 = min(max(0, v[2]), vertex_count - 1) if vertex_count > 0 else 0
-            face_vert_ids.append((v0, v1, v2))
+        face_vert_ids = self.clamp_faces(vertex_count)
 
         face_cnt = len(face_vert_ids)
         if face_cnt == 0 or vertex_count == 0:
@@ -461,6 +481,12 @@ class Trimesh(Node):
             #    [(f[5], f[6], f[4]) if f[6] == 0 else (f[4], f[5], f[6])
             #     for f in self.facedef]
             face_uv_indices = unpack_list(face_uv_indices)
+            if self.nodetype == nvb_def.Nodetype.ANIMMESH:
+                # The texture vertex of each face corner, for the animation's
+                # UV samples: the game takes them from these faces, not from
+                # the animation's own copy (which can differ: water tiles
+                # store their 32 faces twice here, once there).
+                options.mesh_face_tverts[blen_mesh.name] = face_uv_indices
             for layer_idx, uv_coords in enumerate(self.texture_coordinates):
                 if uv_coords:
                     uv_count = len(uv_coords)
@@ -676,7 +702,7 @@ class Trimesh(Node):
                     # Export all, sort alphabetically, put active first
                     uv_active_name = mesh.uv_layers.active.name
                     uv_layer_list = [lay for lay in mesh.uv_layers
-                                     if not lay.name != uv_active_name and
+                                     if lay.name != uv_active_name and
                                      not lay.name.startswith("animtverts.")]
                     uv_layer_list.sort(key=lambda l: l.name)
                     uv_layer_list = [mesh.uv_layers.active] + uv_layer_list
@@ -1201,6 +1227,9 @@ class Emitter(Node):
             else:
                 if label in type(self).property_dict:
                     data_path, dim, convert, _ = self.property_dict[label]
+                    if len(line) < dim + 1:
+                        # No value (stock dag_grifflag01: "chunkName"), keep the default
+                        return line
                     if dim > 1:
                         value = tuple(list(map(convert, line[1:dim+1])))
                     else:
@@ -1678,12 +1707,7 @@ class Aabb(Trimesh):
 
         # Validate and clamp face vertex indices
         vertex_count = len(self.vertex_coords)
-        face_vert_ids = []
-        for v in self.facedef:
-            v0 = min(max(0, v[0]), vertex_count - 1) if vertex_count > 0 else 0
-            v1 = min(max(0, v[1]), vertex_count - 1) if vertex_count > 0 else 0
-            v2 = min(max(0, v[2]), vertex_count - 1) if vertex_count > 0 else 0
-            face_vert_ids.append((v0, v1, v2))
+        face_vert_ids = self.clamp_faces(vertex_count)
 
         face_cnt = len(face_vert_ids)
         if face_cnt == 0 or vertex_count == 0:

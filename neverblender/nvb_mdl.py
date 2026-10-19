@@ -13,7 +13,7 @@ from . import nvb_node
 from . import nvb_anim
 from . import nvb_def
 from . import nvb_utils
-from . import nvb_decompile
+from . import cleanmodels
 from . import nvb_cleanmodels
 
 
@@ -87,7 +87,7 @@ class Mdl():
     def read_ascii_wkm(self, ascii_block, wkmtype, options):
         """TODO: DOC."""
         if options.geom_walkmesh:
-            geom_start = ascii_block.find('node ')
+            geom_start = nvb_utils.find_ascii_line(ascii_block, 'node')
             if (geom_start < 0):  # Most likely empty walkmesh file
                 print("Neverblender: WARNING: Unable to read walkmesh data")
                 return
@@ -99,8 +99,7 @@ class Mdl():
     @staticmethod
     def read_ascii_geom(ascii_block, nodelist):
         """Read the geometry block of ascii mdl."""
-        dlm = 'node '
-        ascii_node_list = [dlm + b for b in ascii_block.split(dlm) if b]
+        ascii_node_list = nvb_utils.split_ascii_nodes(ascii_block)
         for idx, ascii_node in enumerate(ascii_node_list):
             ascii_lines = [l.strip().split() for l in ascii_node.splitlines()]
             node = None
@@ -135,8 +134,8 @@ class Mdl():
 
     def read_ascii_mdl(self, ascii_block, options):
         """Parse an ascii mdl file."""
-        geom_start = ascii_block.find('node ')
-        anim_start = ascii_block.find('newanim ')
+        geom_start = nvb_utils.find_ascii_line(ascii_block, 'node')
+        anim_start = nvb_utils.find_ascii_line(ascii_block, 'newanim')
 
         if (anim_start > 0) and (geom_start > anim_start):
             raise nvb_def.MalformedMdlFile('Animations before geometry')
@@ -194,32 +193,52 @@ class Mdl():
 
         return run_cmd
 
+    @staticmethod
+    def decompile_bundled(mdl_filepath, options):
+        """Decompile a binary MDL with the bundled cleanmodels decompiler.
+
+        Returns the ASCII cleanmodels would write; raises
+        cleanmodels.DecompileError if the file is not a readable binary
+        model. Its warnings are added to options.warnings. Skinned body parts get their bone names from
+        the creature skeleton, looked up next to the model, then in the game
+        folder (the add-on preference, else the usual install locations).
+        """
+        with open(os.fsencode(mdl_filepath), 'rb') as f:
+            data = f.read()
+        dirs = cleanmodels.lookup_dirs(mdl_filepath, game_dir=options.cleanmodels_game_dir)
+        name = os.path.basename(mdl_filepath)
+        model = cleanmodels.decompile(data, dirs)
+        for w in model.warnings:
+            text = f"{name}: {w.node + ': ' if w.node else ''}{w.message}"
+            print("Neverblender: " + text)
+            options.warnings.append(text)
+        return cleanmodels.write(model)
+
     def parse_mdl(self, mdl_filepath, options):
         """Parse a single mdl file."""
         if options.cleanmodels_path:
             # cleanmodels reads binary and ASCII models alike and returns
             # canonical ASCII; if it can't, fall back to the paths below.
             ascii_text = nvb_cleanmodels.to_ascii(options.cleanmodels_path, mdl_filepath,
-                                                  options.cleanmodels_game_dir)
+                                                  options.cleanmodels_game_dir, options.warnings)
             if ascii_text is not None:
                 self.read_ascii_mdl(ascii_text, options)
                 return
         if Mdl.is_binary(mdl_filepath):
-            # Binary models need to be decompiled first
-            # Try built-in decompiler first, then fall back to external if configured
+            # Binary models need to be decompiled first: with the bundled
+            # copy of cleanmodels' decompiler (the same ASCII the cleanmodels
+            # program writes), then, failing that, an external decompiler.
             decompiled = False
-            
-            # Use built-in decompiler
+            failure = ""
             try:
-                print("Neverblender: Decompiling binary MDL using built-in decompiler...")
-                ascii_content = nvb_decompile.decompile(mdl_filepath)
-                if ascii_content:
-                    self.read_ascii_mdl(ascii_content, options)
-                    decompiled = True
-                    print("Neverblender: Binary MDL decompiled successfully.")
+                ascii_content = Mdl.decompile_bundled(mdl_filepath, options)
             except Exception as e:
-                print(f"Neverblender: Built-in decompiler failed: {e}")
-                
+                failure = str(e)
+                print(f"Neverblender: Decompiling {mdl_filepath} failed: {e}")
+            else:
+                self.read_ascii_mdl(ascii_content, options)
+                decompiled = True
+
             # Fall back to external compiler if built-in failed and external is configured
             if not decompiled and options.compiler_use and os.path.isfile(options.compiler_path):
                 print("Neverblender: Trying external decompiler as fallback...")
@@ -255,6 +274,8 @@ class Mdl():
             
             if not decompiled:
                 print("Neverblender: ERROR - Could not decompile binary MDL file.")
+                options.warnings.append("{}: could not be read{}".format(
+                    os.path.basename(mdl_filepath), ": " + failure if failure else ""))
                 """
                 # Legacy external compiler code preserved for reference
                 # Does only work with nwnmdlcomp, not cleanmodels
@@ -288,27 +309,13 @@ class Mdl():
     def parse_wkm(self, wkm_filepath, wkm_type, options):
         """Parse a single walkmesh file."""
         if Mdl.is_binary(wkm_filepath):
-            # Binary modles have to be decompiled
-            if not options.decompiler_use_external:
-                print("Neverblender: WARNING - Detected binary MDL with no decompiler avaible.")
-            else:
-                # Write the output of the external decompiler to a temp file and feed it into the ascii parser
-                # We need to prevent auto-deletion and delete manually ourselves,
-                # (on Windows access to the tempfile will be blocked after running the decompiler)
-                tf = tempfile.NamedTemporaryFile(mode="r+", delete=False)
-                try:
-                    run_cmd = Mdl.build_external_decompile_cmd(wkm_filepath, tf.name, options)
-                    result = subprocess.run(run_cmd, stdout=subprocess.PIPE)
-                    if result.returncode == 0:
-                        self.read_ascii_mdl(tf.read(), options)
-                    else:
-                        print("Neverblender: ERROR - Could not decompile file.")
-                finally:
-                    tf.close()
-                    os.remove(tf.name)
+            # NWN walkmeshes are always ASCII
+            text = "{}: not an ASCII walkmesh, skipped".format(os.path.basename(wkm_filepath))
+            print("Neverblender: WARNING - " + text)
+            options.warnings.append(text)
         else:
             # ASCII model, parse directly
-            with open(os.fsencode(wkm_filepath), 'r') as f:
+            with open(os.fsencode(wkm_filepath), 'r', encoding="latin-1") as f:
                 self.read_ascii_wkm(f.read(), wkm_type, options)
 
     @staticmethod
