@@ -90,7 +90,8 @@ Everything in Neverblender 4.0 (the last Neverwinter Vault release), plus:
   the external decompiler setting works with cleanmodels 4; models with stray
   `node` lines, empty emitter values or a face that uses a vertex twice import
   (checked on the game's own models); MTR files with accented characters
-  import on Linux and macOS.
+  import on Linux and macOS; bezier keys (`positionbezierkey`,
+  `alphabezierkey`, ...) import as their keyed values instead of being dropped.
 
 cleanmodels (optional)
 ----------------------

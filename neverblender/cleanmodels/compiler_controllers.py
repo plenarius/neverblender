@@ -11,6 +11,7 @@ from .compiler_mesh import CompileError
 from .compiler_tree import is_root_parent
 from .controllers import BIOWARE_EMITTER, NODE
 from .types import EMITTER_COLOR_FIELDS, EMITTER_FLOAT_FIELDS
+from .gomath import go_quote
 from .vec import axis_angle_to_quat
 
 _KEY = struct.Struct("<I3HBB")
@@ -36,6 +37,13 @@ _ANIM_EMITTER = (
     ("f", 472, "sizemid_y"), ("f", 180, "sizeend_y"), ("f", 184, "spread"), ("f", 188, "threshold"),
     ("f", 192, "velocity"), ("f", 196, "xsize"), ("f", 200, "ysize"),
 )
+
+def _lightning_subdiv_warning(kind, node):
+    """compiler_controllers.go lightningSubDivWarning: the game compiles no lightningsubdiv."""
+    return "%s %s: lightningsubdiv is not compiled; the game reads no such keyword" % (kind, go_quote(node))
+
+
+_ZERO6 = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
 
 
 class ControllersMixin:
@@ -110,6 +118,10 @@ class ControllersMixin:
                 v = em.floats[name]
                 if v == 0 and name not in declared:
                     continue
+                if name == "lightningsubdiv":
+                    if self.warn is not None:
+                        self.warn(_lightning_subdiv_warning("emitter", n.name))
+                    continue
                 tid = _EMITTER_ID.get(name, 0)
                 if tid:
                     add(tid, 1, [v])
@@ -145,16 +157,30 @@ class ControllersMixin:
                 data.extend(r)
             keys.append((type_id, n, ts, ds, cols))
 
-        def add_float(type_id, kfs):
-            if kfs:
+        # a bezier controller's keys are the value then its two handles, with
+        # 0x10 on the column count (linear keys in it have zero handles)
+        def add_float(type_id, name):
+            kfs = an.float_keys.get(name)
+            if not kfs:
+                return
+            if name in an.bezier:
+                add_rows(type_id, [k[0] for k in kfs],
+                         [(k[1], k[2], k[3]) if len(k) > 2 else (k[1], 0.0, 0.0) for k in kfs], 3, 1 | 0x10)
+            else:
                 add_rows(type_id, [k[0] for k in kfs], [(k[1],) for k in kfs], 1, 1)
 
-        def add_color(type_id, kfs):
-            if kfs:
+        def add_color(type_id, name):
+            kfs = an.color_keys.get(name)
+            if not kfs:
+                return
+            if name in an.bezier:
+                add_rows(type_id, [k[0] for k in kfs],
+                         [tuple(k[1][:3]) + (tuple(k[2][:3]) + tuple(k[3][:3]) if len(k) > 2 else _ZERO6)
+                          for k in kfs], 9, 3 | 0x10)
+            else:
                 add_rows(type_id, [k[0] for k in kfs], [k[1][:3] for k in kfs], 3, 3)
 
         fk = an.float_keys
-        ck = an.color_keys
 
         pk = an.position_keys
         if pk:
@@ -166,25 +192,28 @@ class ControllersMixin:
         ok = an.orientation_keys
         if ok:
             add_rows(20, [k[0] for k in ok], [axis_angle_to_quat(k[1]) for k in ok], 4, 4)
-        add_float(36, fk.get("scale"))
+        add_float(36, "scale")
 
         if node_flag & 0x20 != 0:
-            add_color(100, ck.get("selfillumcolor"))
-            add_float(128, fk.get("alpha"))
+            add_color(100, "selfillumcolor")
+            add_float(128, "alpha")
 
         if node_flag == 3:
-            add_color(76, ck.get("color"))
-            add_float(88, fk.get("radius"))
-            add_float(140, fk.get("multiplier"))
-            add_float(96, fk.get("shadowradius"))
-            add_float(100, fk.get("verticaldisplacement"))
+            add_color(76, "color")
+            add_float(88, "radius")
+            add_float(140, "multiplier")
+            add_float(96, "shadowradius")
+            add_float(100, "verticaldisplacement")
 
         if node_flag == 5:
             for kind, tid, name in _ANIM_EMITTER:
-                if kind == "f":
-                    add_float(tid, fk.get(name))
+                if name == "lightningsubdiv":
+                    if an.float_keys.get(name) and self.warn is not None:
+                        self.warn(_lightning_subdiv_warning("animation node", an.name))
+                elif kind == "f":
+                    add_float(tid, name)
                 elif kind == "c":
-                    add_color(tid, ck.get(name))
+                    add_color(tid, name)
                 else:
                     kfs = fk.get(name)
                     n = len(kfs) if kfs else 0
