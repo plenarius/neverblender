@@ -139,6 +139,11 @@ class Animnode():
                 if key_name.endswith('key'):
                     key_is_single = False
                     key_name = key_name[:-3]
+                    # A bezier key ("alphabezierkey", "positionbezierkey") is
+                    # the time and value, then the handles: keep the time and
+                    # value. The keys are linear in Blender, as all are.
+                    if key_name.endswith('bezier'):
+                        key_name = key_name[:-6]
                 for key_def, key_data in properties_list:
                     if key_name in key_def and key_name not in key_data:
                         data_path = key_def[key_name][0]

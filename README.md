@@ -39,7 +39,7 @@ One release works on all of these; each release is tested on:
 The test round-trips models (a skinned and animated creature, a placeable with
 an emitter, a tile with its walkmesh, ...) through import and export in each
 version and compares the results, and exercises the tools below. Binary models
-must import exactly as the cleanmodels program reads them. Exports from
+must import and compile exactly as the cleanmodels program does. Exports from
 3.6, 4.x and 5.x are identical; 3.3's differ only in the last decimals of some
 rotations.
 
@@ -71,6 +71,10 @@ Everything in Neverblender 4.0 (the last Neverwinter Vault release), plus:
   UV maps, still export. Each animation's sample period is kept on the mesh
   (custom property `sampleperiod.<animation>`) and written back unless its
   shape key samples were moved.
+- **Binary models export directly**: *Compile to Binary* in the export options
+  writes game-ready binaries with cleanmodels' compiler built in, the same
+  bytes the cleanmodels program writes, with or without cleanmodels installed
+  (walkmeshes stay ASCII).
 - **PLT textures**: *File > Import / Export > NWN PLT Texture (.plt)*, and
   *Image > Setup PLT Layer Images* in the image editor; an optional autoreload
   of PLT files changed on disk (add-on preferences).
@@ -86,7 +90,8 @@ Everything in Neverblender 4.0 (the last Neverwinter Vault release), plus:
   the external decompiler setting works with cleanmodels 4; models with stray
   `node` lines, empty emitter values or a face that uses a vertex twice import
   (checked on the game's own models); MTR files with accented characters
-  import on Linux and macOS.
+  import on Linux and macOS; bezier keys (`positionbezierkey`,
+  `alphabezierkey`, ...) import as their keyed values instead of being dropped.
 
 cleanmodels (optional)
 ----------------------
@@ -104,8 +109,8 @@ path in the add-on preferences, or anywhere on your `PATH`), it also:
 - **checks exported models** (*Check with cleanmodels* in the export options,
   on by default) and lists the findings in *Scene properties > cleanmodels*,
   with a button that selects the object each finding is about;
-- **compiles exported models** to game-ready binaries (*Compile with
-  cleanmodels*, off by default; walkmeshes stay ASCII).
+- **compiles exported models** with the program itself (*Compile to Binary*,
+  off by default; walkmeshes stay ASCII).
 - **makes variants** (cleanmodels 4.7.0 or later): *Scene properties >
   cleanmodels Variants* fits the selected robe, cloak or armour part
   (named for its body, like `pmh0_robe003` or `pfe0_chest050`) to the other
@@ -123,12 +128,15 @@ path in the add-on preferences, or anywhere on your `PATH`), it also:
   Bodies* lists every body in the game install and the resources, without
   selecting a model, and marks the ones only the resources have.
 
-Without cleanmodels, binary models are read by a copy of cleanmodels'
-decompiler that ships with Neverblender (`neverblender/cleanmodels`, from the
-cleanmodels repository, where CI checks it gives the same output as the
-cleanmodels program). Skinned body parts (`pmh0_neck001` and the like) get their
-bone names from the creature skeleton: next to the model, or in the game folder
-(*Game folder* in the preferences, or the usual install locations).
+Without cleanmodels, binary models are read and written by a copy of
+cleanmodels' decompiler and compiler that ships with Neverblender
+(`neverblender/cleanmodels`, from the cleanmodels repository, where CI checks
+it gives the same output as the cleanmodels program). Skinned body parts
+(`pmh0_neck001` and the like) get their bone names from the creature skeleton,
+and a compiled model's node numbers come from its supermodel: both are looked
+up next to the model, then in the game folder (*Game folder* in the
+preferences, or the usual install locations). Compile warnings, such as a
+supermodel that isn't found, are listed in *Scene properties > cleanmodels*.
 
 Reporting problems
 ------------------

@@ -3,6 +3,7 @@
 from .controllers import EMITTER_DECLARED_NAMES
 from .f32 import fmt_float, fmt_vec3
 from .types import ANIM_COLOR_CONTROLLERS, ANIM_FLOAT_CONTROLLERS, VEC3_ZERO
+from .gostr import equal_fold, go_lower
 
 MAX_NODE_DEPTH = 10000
 
@@ -17,7 +18,7 @@ _CAMEL = {
 
 
 def camel_case(s):
-    return _CAMEL.get(s.lower(), s)
+    return _CAMEL.get(go_lower(s), s)
 
 
 def write(model):
@@ -78,7 +79,7 @@ class _Writer:
         for n in m.nodes:
             if n is None:
                 continue
-            children.setdefault(n.parent.lower(), []).append(n)
+            children.setdefault(go_lower(n.parent), []).append(n)
         visited = set()
         # Iterative pre-order, children in declaration order (writeNodeRecursive)
         stack = [(root, 0)]
@@ -88,8 +89,8 @@ class _Writer:
                 continue
             visited.add(id(node))
             self.write_node(node)
-            lname = node.name.lower()
-            kids = [c for c in children.get(lname, ()) if c is not node and c.parent.lower() == lname]
+            kids = [c for c in children.get(go_lower(node.name), ())
+                    if c is not node and equal_fold(c.parent, node.name)]
             for c in reversed(kids):
                 stack.append((c, depth + 1))
 
@@ -386,18 +387,28 @@ class _Writer:
                 ind(6, "detonatekey %d" % len(keys))
                 for t, _ in keys:
                     ind(3, fmt_float(t))
+            elif name in an.bezier:
+                ind(6, "%sbezierkey %d" % (name, len(keys)))
+                pre = "  " * 3
+                self.out.extend("%s%s %s %s %s\n" % (pre, fmt_float(k[0]), fmt_float(k[1]), fmt_float(_handle(k, 2, 0.0)),
+                                                      fmt_float(_handle(k, 3, 0.0))) for k in keys)
             else:
                 ind(6, "%skey %d" % (name, len(keys)))
                 pre = "  " * 3
-                self.out.extend("%s%s %s\n" % (pre, fmt_float(t), fmt_float(v)) for t, v in keys)
+                self.out.extend("%s%s %s\n" % (pre, fmt_float(k[0]), fmt_float(k[1])) for k in keys)
             ind(6, "endlist")
         for name in ANIM_COLOR_CONTROLLERS:
             keys = an.color_keys.get(name)
             if not keys:
                 continue
-            ind(6, "%skey %d" % (name, len(keys)))
             pre = "  " * 3
-            self.out.extend("%s%s %s\n" % (pre, fmt_float(t), fmt_vec3(v)) for t, v in keys)
+            if name in an.bezier:
+                ind(6, "%sbezierkey %d" % (name, len(keys)))
+                self.out.extend("%s%s %s %s %s\n" % (pre, fmt_float(k[0]), fmt_vec3(k[1]), fmt_vec3(_handle(k, 2, _ZERO3)),
+                                                      fmt_vec3(_handle(k, 3, _ZERO3))) for k in keys)
+            else:
+                ind(6, "%skey %d" % (name, len(keys)))
+                self.out.extend("%s%s %s\n" % (pre, fmt_float(k[0]), fmt_vec3(k[1])) for k in keys)
             ind(6, "endlist")
         ind(4, "endnode")
 
@@ -432,3 +443,11 @@ class _Writer:
             return
         self.indent(level, "%s %d" % (name, len(vecs)))
         self.vec3_lines(level + 2, vecs)
+
+
+_ZERO3 = (0.0, 0.0, 0.0)
+
+
+def _handle(key, i, zero):
+    """A bezier key's handle; a linear key in a bezier controller has zero handles."""
+    return key[i] if len(key) > i else zero

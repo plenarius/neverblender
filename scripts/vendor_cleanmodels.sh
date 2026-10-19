@@ -11,7 +11,7 @@ TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 git clone -q --filter=blob:none --no-checkout "$REPO" "$TMP/cm"
 git -C "$TMP/cm" checkout -q "$REF" -- python/cleanmodels
-COMMIT=$(git -C "$TMP/cm" rev-parse "$REF")
+COMMIT=$(git -C "$TMP/cm" rev-parse "$REF^{commit}")  # the commit, also for an annotated tag
 DESC=$(git -C "$TMP/cm" describe --tags --always "$COMMIT")
 rm -rf "$DEST"
 cp -r "$TMP/cm/python/cleanmodels" "$DEST"
