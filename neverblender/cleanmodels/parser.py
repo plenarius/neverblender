@@ -178,10 +178,18 @@ def _tok(tokens, i):
 
 class _ListWarn:
     """listWarn: damaged entries are kept, zeroed and reported, at most 5 per list."""
-    __slots__ = ("p", "shown", "total", "stopped")
+    __slots__ = ("p", "where", "shown", "total", "stopped")
 
     def __init__(self, p):
         self.p = p
+        # newListWarn: each warning names the node and the list's keyword
+        if p.current_anim is not None and p.current_anim_node is not None:
+            node = p.current_anim_node.name
+        elif p.current_node is not None:
+            node = p.current_node.name
+        else:
+            node = ""
+        self.where = "node %s, %s: " % (quote(node), p.keyword)
         self.shown = 0
         self.total = 0
         self.stopped = False
@@ -194,11 +202,11 @@ class _ListWarn:
         self.total += 1
         if self.shown < MAX_LIST_WARNINGS:
             self.shown += 1
-            self.p.errorf(msg)
+            self.p.errorf(self.where + msg)
 
     def done(self):
         if self.total > self.shown:
-            self.p.errorf("%d more damaged value(s) in this list were set to 0" % (self.total - self.shown))
+            self.p.errorf(self.where + "%d more damaged value(s) in this list were set to 0" % (self.total - self.shown))
 
     def float(self, tok):
         if self.stopped:
@@ -273,6 +281,7 @@ class _Parser:
         self.current_anim = None
         self.current_anim_node = None
         self.node_stack = []
+        self.keyword = ""  # first word of the parse_parameter line, for _ListWarn
         self.alloc_bytes = 0
 
     def errorf(self, msg):
@@ -554,6 +563,7 @@ class _Parser:
 
     def parse_parameter(self, tokens):
         kw = gostr.go_lower(tokens[0])
+        self.keyword = kw
         if self.current_anim is not None and self.current_anim_node is not None:
             self.parse_anim_node_param(kw, tokens)
             return
@@ -670,6 +680,8 @@ class _Parser:
             self.vec3_param(tokens, mesh, "self_illum_color")
         elif kw == "center":
             pass  # mn3 or a name; not stored
+        elif kw == "lightmapped":
+            pass  # not read by the game (parser.go)
         elif kw in _MESH_VEC3_LISTS:
             c = self.counted(tokens)
             if c is not None:
@@ -1208,7 +1220,7 @@ class _Parser:
 _MESH_STRINGS = {"bitmap": "bitmap", "texture0": "bitmap", "texture1": "texture1", "texture2": "texture2",
                  "materialname": "material_name", "renderhint": "render_hint"}
 _MESH_INTS = {"shadow": "shadow", "beaming": "beaming", "render": "render", "transparencyhint": "transparency_hint",
-              "tilefade": "tile_fade", "rotatetexture": "rotate_texture", "lightmapped": "light_mapped"}
+              "tilefade": "tile_fade", "rotatetexture": "rotate_texture"}
 _MESH_VEC3_LISTS = {"verts": "verts", "tverts": "tverts", "tverts1": "tverts1", "tverts2": "tverts2",
                     "tverts3": "tverts3", "colors": "colors", "normals": "normals"}
 _MESH_INT3_LISTS = {"texindices0": "tex_indices0", "texindices1": "tex_indices1", "texindices2": "tex_indices2",
