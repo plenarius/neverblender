@@ -95,7 +95,8 @@ class Mtr(object):
         if label.startswith('//') or label.startswith('#'):
             return  # Comment line
         if label == 'renderhint':
-            self.renderhint = line[1]
+            # A bare "renderhint" (older exports wrote one) means no hint
+            self.renderhint = line[1] if len(line) > 1 else ''
         elif label == 'parameter':
             # Old format: parameter int/float name value
             try:
@@ -152,10 +153,16 @@ class Mtr(object):
                 ascii_lines.append("customshaderGS " + blen_material.nvb.mtr.shader_gs)
             ascii_lines.append("")
         elif tex_list and (tex_list[:3].count(nvb_def.null) <= 1):
-            # Add Renderhint
-            ascii_lines.append("// Renderhint")
-            ascii_lines.append("renderhint " + blen_material.nvb.mtr.renderhint)
-            ascii_lines.append("")
+            # Add Renderhint; an empty one (an imported mtr without a hint)
+            # is NormalAndSpecMapped when a normal or specular texture is
+            # present, as for materials written into the mdl, else omitted
+            hint = blen_material.nvb.mtr.renderhint
+            if not hint and any(t != nvb_def.null for t in tex_list[1:3]):
+                hint = "NormalAndSpecMapped"
+            if hint:
+                ascii_lines.append("// Renderhint")
+                ascii_lines.append("renderhint " + hint)
+                ascii_lines.append("")
         # Add list of textures
         # Only export texture0 if there are additional textures (texture1, etc.)
         if len(tex_list) > 1:
