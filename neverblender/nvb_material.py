@@ -60,6 +60,9 @@ class Material(object):
                 shader2_fs = mtr_data.customshaderFS
             return (shader1_vs == shader2_vs) and (shader1_fs == shader2_fs)
 
+        # What a material made from this one would remember (see create_blender_material)
+        mdl_refs = (self.bitmap or "", self.materialname or "") \
+            if (self.materialname or self.mtr_data is not None) else ("", "")
         #print("####################")
         #print("looking for: ")
         #print(self.texture_list)
@@ -75,7 +78,8 @@ class Material(object):
                 #print(alpha)
                 # Compare textures, colors and alpha
                 if ( (tex_list and len(tex_list) >= 5) and check_textures(tex_list[:5], self.texture_list[:5], True) and
-                     check_shaders(blen_mat, self.mtr_data) ):
+                     check_shaders(blen_mat, self.mtr_data) and
+                     (blen_mat.nvb.mtr.mdl_bitmap, blen_mat.nvb.mtr.mdl_materialname) == mdl_refs ):
                     #print("MATCH!")
                     return blen_mat
         return None
@@ -165,6 +169,10 @@ class Material(object):
             blender_mat.use_backface_culling = True
 
             blender_mat.nvb.mtr.use = bool(self.materialname) or self.mtr_data is not None
+            if blender_mat.nvb.mtr.use:
+                # Keep how the model referenced its textures and MTR
+                blender_mat.nvb.mtr.mdl_bitmap = mdl_bitmap or ""
+                blender_mat.nvb.mtr.mdl_materialname = mdl_materialname or ""
             if blender_mat.nvb.mtr.use and self.mtr_data:
                 blender_mat.nvb.mtr.renderhint = self.mtr_data.renderhint
                 blender_mat.nvb.mtr.shader_vs = self.mtr_data.customshaderVS
@@ -200,7 +208,18 @@ class Material(object):
             if blen_material.nvb.mtr.use:
                 # MTRs are exported in a second pass
                 mtr_name = nvb_mtr.Mtr.get_mtr_name(blen_material)
-                ascii_lines.append('  ' + options.mat_mtr_ref + ' ' + mtr_name)
+                mdl_bitmap = blen_material.nvb.mtr.mdl_bitmap
+                mdl_materialname = blen_material.nvb.mtr.mdl_materialname
+                if mdl_bitmap or mdl_materialname:
+                    # As the imported model had them, whatever the export
+                    # preferences say; the MTR is the file they name
+                    if mdl_bitmap:
+                        ascii_lines.append('  bitmap ' + mdl_bitmap)
+                    if mdl_materialname:
+                        ascii_lines.append('  materialname ' + mdl_materialname)
+                    mtr_name = mdl_materialname or mdl_bitmap
+                else:
+                    ascii_lines.append('  ' + options.mat_mtr_ref + ' ' + mtr_name)
                 # AddOn options specify whether to actually write material data to mtr file
                 if options.mat_mtr_generate:
                     options.mtr_list.add((mtr_name, blen_material.name))

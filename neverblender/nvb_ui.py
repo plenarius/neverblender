@@ -366,6 +366,8 @@ class NVB_PT_mtr(bpy.types.Panel):
 
         layout.separator()
         box = layout.box()
+        box.prop(mat.nvb.mtr, 'mdl_bitmap')
+        box.prop(mat.nvb.mtr, 'mdl_materialname')
         box.prop(mat.nvb.mtr, 'renderhint')
         box.prop(mat.nvb.mtr, 'shader_vs')
         box.prop(mat.nvb.mtr, 'shader_fs')
