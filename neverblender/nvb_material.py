@@ -173,6 +173,8 @@ class Material(object):
                 # Keep how the model referenced its textures and MTR
                 blender_mat.nvb.mtr.mdl_bitmap = mdl_bitmap or ""
                 blender_mat.nvb.mtr.mdl_materialname = mdl_materialname or ""
+                blender_mat.nvb.mtr.mdl_mtr_texture0 = bool(
+                    self.mtr_data and self.mtr_data.texture_list[0])
             if blender_mat.nvb.mtr.use and self.mtr_data:
                 blender_mat.nvb.mtr.renderhint = self.mtr_data.renderhint
                 blender_mat.nvb.mtr.shader_vs = self.mtr_data.customshaderVS
