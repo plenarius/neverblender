@@ -173,6 +173,7 @@ class Mtr(object):
             first = 0
             mtr_props = blen_material.nvb.mtr
             if mtr_props.mdl_materialname and mtr_props.mdl_bitmap and \
+               not mtr_props.mdl_mtr_texture0 and \
                tex_list[0].lower() == mtr_props.mdl_bitmap.lower():
                 first = 1
             ascii_lines.extend([fstr.format(i, t)

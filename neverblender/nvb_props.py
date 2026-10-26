@@ -554,6 +554,9 @@ class NVB_PG_material_mtr(bpy.types.PropertyGroup):
         description="The 'materialname' written to the model, and the name of the MTR file. "
                     "Empty: the export preferences decide",
         default='', options=set())
+    # The imported mtr had a texture0 of its own (rather than the model's
+    # bitmap supplying the diffuse map); export keeps it
+    mdl_mtr_texture0: bpy.props.BoolProperty(default=False, options=set())
     # For gui editing
     shader_vs: bpy.props.StringProperty(name='Vertex Shader',
                                         description='Specify Vertex shader',
