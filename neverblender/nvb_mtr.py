@@ -168,8 +168,15 @@ class Mtr(object):
         if len(tex_list) > 1:
             ascii_lines.append("// Textures")
             fstr = 'texture{:d} {:s}'
+            # The model's own 'bitmap' (a PLT, say) is the diffuse map next to
+            # a 'materialname': leave texture0 out as the imported mtr did
+            first = 0
+            mtr_props = blen_material.nvb.mtr
+            if mtr_props.mdl_materialname and mtr_props.mdl_bitmap and \
+               tex_list[0].lower() == mtr_props.mdl_bitmap.lower():
+                first = 1
             ascii_lines.extend([fstr.format(i, t)
-                                for i, t in enumerate(tex_list)])
+                                for i, t in enumerate(tex_list) if i >= first])
             ascii_lines.append("")
         # Add parameters
         # Convert blender param list to dict

@@ -542,6 +542,18 @@ class NVB_PG_material_mtr(bpy.types.PropertyGroup):
     renderhint: bpy.props.StringProperty(name="Renderhint",
                                         description="Specify Vertex shader",
                                         default="NormalAndSpecMapped", options=set())
+    # The references the imported model had; written back on export (see
+    # Material.generate_ascii). Empty for materials made in Blender.
+    mdl_bitmap: bpy.props.StringProperty(
+        name="bitmap",
+        description="The 'bitmap' written to the model, e.g. a PLT used for the diffuse map. "
+                    "Empty: the export preferences decide",
+        default='', options=set())
+    mdl_materialname: bpy.props.StringProperty(
+        name="materialname",
+        description="The 'materialname' written to the model, and the name of the MTR file. "
+                    "Empty: the export preferences decide",
+        default='', options=set())
     # For gui editing
     shader_vs: bpy.props.StringProperty(name='Vertex Shader',
                                         description='Specify Vertex shader',
