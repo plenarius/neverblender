@@ -219,8 +219,8 @@ class NVB_OT_set_massimport(bpy.types.Operator):
                 rows = len(mdl_names)
         return rows, cols, mdl_names
 
-    def mass_load_mdl(self, mdl_dir, mdl_list, set_mode, row_cnt, col_cnt):
-        """Import all mdl in list."""
+    def plan_mass_import(self, mdl_dir, mdl_list, set_mode, row_cnt, col_cnt):
+        """List the (filepath, location) of the models to import."""
         def get_spiral_location(idx):
             k = math.floor(math.floor(math.sqrt(idx)-1)/2)+1
             return (10.0 * min(k, max(-k, -2*k + abs(idx-(4*k*k)-k))),
@@ -233,28 +233,34 @@ class NVB_OT_set_massimport(bpy.types.Operator):
                         for c in range(col_cnt)]
         else:
             loc_list = [get_spiral_location(i) for i in range(len(mdl_list))]
-        # Do the importing
+        plan = []
         for mdl_loc, mdl_name in zip(loc_list, mdl_list):
             if mdl_name:  # '' == don't import
                 filename = mdl_name + '.mdl'
                 filepath = os.path.join(mdl_dir, filename)
                 if os.path.isfile(os.fsencode(filepath)):
-                    bpy.ops.scene.nvb_mdlimport(
-                        filepath=filepath,
-                        import_walkmesh=True,
-                        import_smoothgroups=True,
-                        import_normals=True,
-                        mat_import=True,
-                        mat_merge=True,
-                        tex_search=False,
-                        anim_import=True,
-                        anim_fps_use=False,
-                        anim_fps=30,
-                        anim_restpose=True,
-                        rotmode='XYZ',
-                        mdl_location=mdl_loc)
+                    plan.append((filepath, mdl_loc))
                 else:
                     self.report({'INFO'}, filename + ' not found')
+        return plan
+
+    @staticmethod
+    def import_one(filepath, mdl_loc):
+        """Import a single model of the set."""
+        bpy.ops.scene.nvb_mdlimport(
+            filepath=filepath,
+            import_walkmesh=True,
+            import_smoothgroups=True,
+            import_normals=True,
+            mat_import=True,
+            mat_merge=True,
+            tex_search=False,
+            anim_import=True,
+            anim_fps_use=False,
+            anim_fps=30,
+            anim_restpose=True,
+            rotmode='XYZ',
+            mdl_location=mdl_loc)
 
     @classmethod
     def poll(self, context):
@@ -262,15 +268,16 @@ class NVB_OT_set_massimport(bpy.types.Operator):
         scene = context.scene
         return scene and scene.nvb.set_filepath
 
-    def execute(self, context):
-        """TODO: DOC."""
+    def make_plan(self, context):
+        """The models to import for the selected group, terrain or crosser,
+        or None (after reporting why)."""
         scene = context.scene
 
         set_mode = scene.nvb.set_mode
         set_path = scene.nvb.set_filepath
         if not os.path.isfile(os.fsencode(set_path)):
             self.report({'ERROR'}, 'Error: Unable to open file.')
-            return {'CANCELLED'}
+            return None
 
         if set_mode == 'GP':  # Groups
             itm = scene.nvb.set_group_list[scene.nvb.set_group_list_idx]
@@ -281,6 +288,63 @@ class NVB_OT_set_massimport(bpy.types.Operator):
 
         rows, cols, mdl_list = \
             self.get_mdl_list(set_path, set_mode, itm.el_name)
-        self.mass_load_mdl(os.path.dirname(set_path), mdl_list,
-                           set_mode, rows, cols)
+        return self.plan_mass_import(os.path.dirname(set_path), mdl_list,
+                                     set_mode, rows, cols)
+
+    def execute(self, context):
+        """Import every model at once (scripts); the panel uses invoke."""
+        plan = self.make_plan(context)
+        if plan is None:
+            return {'CANCELLED'}
+        for filepath, mdl_loc in plan:
+            self.import_one(filepath, mdl_loc)
         return {'FINISHED'}
+
+    def invoke(self, context, event):
+        """Import one model per timer tick, so Blender stays responsive, shows
+        its progress and can be cancelled with Esc: a set of 169 tiles takes
+        minutes, and one blocking call looks like a hang."""
+        self._plan = self.make_plan(context)
+        if self._plan is None:
+            return {'CANCELLED'}
+        if not self._plan:
+            return {'FINISHED'}
+        self._done = 0
+        wm = context.window_manager
+        wm.progress_begin(0, len(self._plan))
+        self._timer = wm.event_timer_add(0.05, window=context.window)
+        wm.modal_handler_add(self)
+        context.workspace.status_text_set(self._status())
+        return {'RUNNING_MODAL'}
+
+    def _status(self):
+        return "Importing tiles %d / %d (Esc to cancel)" % (self._done, len(self._plan))
+
+    def _finish(self, context):
+        wm = context.window_manager
+        wm.event_timer_remove(self._timer)
+        wm.progress_end()
+        context.workspace.status_text_set(None)
+
+    def modal(self, context, event):
+        if event.type == 'ESC':
+            self._finish(context)
+            self.report({'WARNING'}, "Import cancelled after %d of %d tiles" %
+                        (self._done, len(self._plan)))
+            return {'CANCELLED'}
+        if event.type != 'TIMER':
+            return {'PASS_THROUGH'}
+        try:
+            filepath, mdl_loc = self._plan[self._done]
+            self.import_one(filepath, mdl_loc)
+        except Exception:
+            self._finish(context)
+            raise
+        self._done += 1
+        if self._done >= len(self._plan):
+            self._finish(context)
+            self.report({'INFO'}, "Imported %d tiles" % self._done)
+            return {'FINISHED'}
+        context.window_manager.progress_update(self._done)
+        context.workspace.status_text_set(self._status())
+        return {'RUNNING_MODAL'}
