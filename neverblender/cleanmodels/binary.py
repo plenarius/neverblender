@@ -14,10 +14,17 @@ import math
 import struct
 
 from . import controllers
+from .share_positions import share_positions
+from .gen_tangents import omit_generated_tangents
+from .binary_order import declaration_order
 from .controllers import controller_id
-from .compiler_tangents import hint_wants_tangents
-from .f32 import f32
+from .compiler_normals import game_normalize
+from .compiler_mesh import ExpandedMesh
+from .compiler_tangents import generate_tangents, hint_wants_tangents
+from .f32 import f32, f32_bits, fmt_float
 from .gostr import equal_fold, go_lower, quote
+from .vec import axis_angle_to_quat, parent_chain, rotate_vector_axis_angle, world_vertices
+from .compiler_tree import resolve_geom_tree
 from .types import (
     AabbData, AabbEntry, AnimMeshData, AnimNode, Animation, DanglyData, DecompileWarning,
     EmitterData, Face, LightData, MeshData, Model, Node, ReferenceData, SkinData, VertexWeight,
@@ -27,6 +34,7 @@ from .types import (
 
 MESH_HEADER_SIZE = 512
 MESH_HEADER_P_MDX_VERTEX = 444
+MESH_HEADER_P_MDX_NORMAL = 468
 MAX_READ_NODE_DEPTH = 256
 
 _U32 = struct.Struct("<I")
@@ -57,14 +65,16 @@ def is_binary_mdl(data):
     return len(data) >= 12 and _U32.unpack_from(data, 0)[0] == 0
 
 
-def decompile_file(path, skeleton_dirs=()):
+def decompile_file(path, skeleton_dirs=(), keep_vertex_splits=False, material_dirs=()):
     with open(path, "rb") as f:
         data = f.read()
-    return decompile(data, skeleton_dirs)
+    return decompile(data, skeleton_dirs, keep_vertex_splits, material_dirs)
 
 
-def decompile(data, skeleton_dirs=()):
-    """Decompile binary MDL bytes into a Model (binary.go DecompileWithOptions)."""
+def decompile(data, skeleton_dirs=(), keep_vertex_splits=False, material_dirs=()):
+    """Decompile binary MDL bytes into a Model (binary.go DecompileWithOptions).
+    material_dirs is DecompileOptions.MaterialDirs: where the materials that
+    make a mesh normal-mapped are looked up (omit_generated_tangents)."""
     d = _Decompiler(data, skeleton_dirs)
     try:
         d.read_file_header()
@@ -89,8 +99,66 @@ def decompile(data, skeleton_dirs=()):
             d.warn(WARN_TRUNCATED_DATA, ptr, "", "animation read error: %s" % err)
     for ps in d.pending_skins:
         d.resolve_skin_weights(ps)
+    fill_tangents(d)
+    apply_tangent_clones(d)
     unmerge_render_lists(d)
+    if not keep_vertex_splits:
+        omit_generated_tangents(d, list(material_dirs))
+        for n in d.model.nodes:
+            share_positions(n)
+    declaration_order(d.model, d.stored_hints)
     return d.model
+
+
+def _ascii_case(s, f):
+    """asciiCase: change the case of ASCII letters only (bytes.lower/upper),
+    leaving Latin-1 letters as they are, as Go does."""
+    return f(s.encode("latin-1")).decode("latin-1")
+
+
+def stored_anim_root_match(root, names, parents):
+    """storedAnimRootMatch: (whether the stored animroot names a stored node case
+    for case, whether the stored tree is wider than the game's cut leaves it)."""
+    if not root or equal_fold(root, "NULL"):
+        return False, False
+    if root not in names:
+        return False, False
+    m = names.index(root)
+    kept = [False] * len(names)
+    i = m
+    while i >= 0:
+        kept[i] = True
+        i = parents[i]
+    for i in range(len(names)):
+        j = i
+        while j >= 0 and not kept[i]:
+            if j == m:
+                kept[i] = True
+            j = parents[j]
+        if not kept[i]:
+            return True, True
+    return True, False
+
+
+def written_anim_root(stored, matched, wide, nodes):
+    """writtenAnimRoot: the animroot to write, so that a compile of the ASCII
+    cuts the tree (MDL-NODE-045) to what the binary holds: one matching the
+    node the stored one matched, or none when it matched none or the stored
+    tree is wider than that cut leaves it."""
+    lower = _ascii_case(stored, bytes.lower)
+    if not stored or equal_fold(stored, "NULL"):
+        return lower
+    names = set(n.name for n in nodes)
+    if matched and not wide:
+        if lower not in names:
+            for n in nodes:
+                if equal_fold(n.name, stored):
+                    return n.name
+        return lower
+    for s in (lower, stored, _ascii_case(stored, bytes.upper)):
+        if s not in names:
+            return s
+    return stored
 
 
 class _PendingSkin:
@@ -125,6 +193,9 @@ class _Decompiler:
         self.mdx_size = 0
         self.root_node_ptr = 0
         self.anim_ptrs = []
+        self.anim_stored_names = []  # Go: animStoredNames, animStoredParent, animStoredCur
+        self.anim_stored_parent = []
+        self.anim_stored_cur = -1
         self.node_order = []   # (name, part number)
         self.pending_skins = []
         self.visited_ptrs = set()
@@ -136,6 +207,10 @@ class _Decompiler:
         self.where = ("", "", "")
         self.nan_warns = {}
         self.render_lists = {}  # node -> render index list (binary_merged.go)
+        # node -> stored transparencyhint of a mesh unmerge_render_lists gave
+        # another (declaration_order plans with it)
+        self.stored_hints = {}
+        self.tangent_fills = []  # meshes whose tangent stream holds bad vectors
 
     # --- low-level reads (bytes.Reader + encoding/binary semantics) ---
 
@@ -242,14 +317,39 @@ class _Decompiler:
 
     def read_fixed_string(self, n):
         """Returns (string, ok). A short read returns ("", False)."""
+        s, _, ok = self.read_fixed_text(n)
+        return s, ok
+
+    def read_fixed_text(self, n):
+        """readFixedText: (string, junk bytes or None, ok)."""
+        s, junk, ok = self.read_fixed_text_case(n)
+        return s.lower(), junk, ok
+
+    def read_node_name(self, n):
+        """readNodeName: (stored, name with ASCII letters lowered). Bytes above
+        0x7F are kept as Latin-1 (MDL-BIN-007); control bytes are dropped."""
         at = self._take(n)
         if at is None:
-            return "", False
+            return "", ""
         buf = self.data[at:at + n]
         end = buf.find(b"\0")
         if end >= 0:
             buf = buf[:end]
-        return bytes(c for c in buf if 0x20 <= c < 0x7F).decode("ascii").lower(), True
+        clean = bytes(c for c in buf if c >= 0x20 and c != 0x7F)
+        return clean.decode("latin-1"), clean.lower().decode("latin-1")
+
+    def read_fixed_text_case(self, n):
+        """readFixedTextCase: read_fixed_text with the letters' case kept."""
+        at = self._take(n)
+        if at is None:
+            return "", None, False
+        buf = self.data[at:at + n]
+        end = buf.find(b"\0")
+        if end >= 0:
+            buf = buf[:end]
+        clean = bytes(c for c in buf if 0x20 <= c < 0x7F)
+        junk = bytes(buf) if len(clean) < len(buf) else None
+        return clean.decode("ascii"), junk, True
 
     def read_array_def(self):
         """Returns (ptr, count, alloc); zeros on a short read (no read_err)."""
@@ -376,7 +476,7 @@ class _Decompiler:
         self.skip(24)
         inherit_color = self.read_i32()
         node_number = self.read_i32()
-        node_name, _ = self.read_fixed_string(32)
+        _, node_name = self.read_node_name(32)
         self.where = ("", node_name, "the node header")
         self.skip(8)
         children_def, _ = self.read_array_def()
@@ -492,7 +592,13 @@ class _Decompiler:
         em.update = self.read_fixed_string(32)[0]
         em.render = self.read_fixed_string(32)[0]
         em.blend = self.read_fixed_string(32)[0]
-        em.texture = self.read_fixed_string(64)[0]
+        tex_at = self.p
+        em.texture, junk, _ = self.read_fixed_text(64)
+        if junk is not None:
+            em.texture = ""
+            self.warn(WARN_GENERAL, tex_at, node.name,
+                      "emitter %s: texture field holds bytes that are not text (%s); no texture written"
+                      % (quote(node.name), " ".join("%02x" % c for c in junk)))
         chunk = self.read_fixed_string(16)[0]
         if chunk:
             em.chunk_name = chunk
@@ -564,10 +670,14 @@ class _Decompiler:
         p_tex3 = self.read_i32()
         p_normals = self.read_i32()
         p_colors = self.read_i32()
-        self.skip(12)
+        # anim0-2 and anim4 only tell a 1.69 bump-map stream from tangents (binary.go)
+        p_anim0 = self.read_i32()
+        p_anim1 = self.read_i32()
+        p_anim2 = self.read_i32()
         p_tangent = self.read_i32()
-        self.skip(4)
+        p_anim4 = self.read_i32()
         p_handedness = self.read_i32()
+        other_tex_anim = p_anim0 != -1 or p_anim1 != -1 or p_anim2 != -1 or p_anim4 != -1
         self.skip(1)  # lightmapped: uninitialised in the game's output, ignored (binary.go)
         mesh.rotate_texture = self.read_byte()[0]
         self.skip(2 + 4 + 4)
@@ -597,7 +707,7 @@ class _Decompiler:
                 self.at("colors")
                 self.read_mdx_colors(mesh, p_colors, n)
             if n > 0 and p_tangent >= 0:
-                self.read_mdx_tangents(mesh, p_tangent, p_handedness, n)
+                self.read_mdx_tangents(node, p_tangent, p_handedness, n, other_tex_anim)
             if faces_def[1] > 0 and faces_def[0] != 0:
                 self.read_faces(mesh, faces_def)
             rl = self.read_render_list(idx_count_def, idx_offset_def)
@@ -757,13 +867,17 @@ class _Decompiler:
             return
         self.at("faces")
         faces = []
+        adjacency = []
         for _ in range(count):
             normal = self.read_vec3()
             self.skip(4)
             surface = self.read_i32()
-            self.skip(6)
+            # short adj_face_ids[3], -1 for none
+            adjacency.append([self.read_i16(), self.read_i16(), self.read_i16()])
             v = (self.read_u16(), self.read_u16(), self.read_u16())
             faces.append(Face(v, 0, v, surface, normal))
+        mesh.stored_adjacency = adjacency
+        mesh.faces_offset = abs_ptr
         n = len(mesh.verts)
         if n > 0:
             for f in faces:
@@ -805,7 +919,8 @@ class _Decompiler:
             out.append((f32(r / _F32_255), f32(g / _F32_255), f32(b / _F32_255)))
         mesh.colors = out
 
-    def read_mdx_tangents(self, mesh, tangent_ptr, handedness_ptr, count):
+    def read_mdx_tangents(self, node, tangent_ptr, handedness_ptr, count, other_tex_anim):
+        mesh = node.mesh
         tangent_abs = self.go_to_mdx_pointer(tangent_ptr)
         if tangent_abs < 0 or tangent_abs + count * 12 > self.size:
             return
@@ -820,19 +935,52 @@ class _Decompiler:
                     handedness = [self.read_f32()[0] for _ in range(count)]
         if not self.seek(tangent_abs):
             return
-        self.at("tangents")
+        # Raw floats, so a NaN is told from a zero; bad vectors are filled by
+        # fill_tangents. A NaN in a stream not read as tangents is warned about
+        # as read_f32 would (binary.go).
         out = []
-        unit = True
+        fill = _TangentFill(node)
+        nans = []
+        unit = 0
         for i in range(count):
-            t = self.read_vec3()
+            c = []
+            finite = True
+            for _ in range(3):
+                off = self.p
+                bits = self._read(_U32, 4)[0]
+                x = _F32.unpack(_U32.pack(bits))[0]
+                if not math.isfinite(x):
+                    finite = False
+                    nans.append((off, bits))
+                c.append(x)
+            t = (c[0], c[1], c[2])
             w = -1.0 if i < len(handedness) and handedness[i] < 0 else 1.0
+            if not finite:
+                fill.non_finite += 1
+                t = (0.0, 0.0, 0.0)
+            elif t == (0.0, 0.0, 0.0):
+                fill.zero += 1
+            elif _is_unit_tangent(t):
+                unit += 1
+            else:
+                fill.other += 1
+            if not finite or not _is_unit_tangent(t):
+                fill.bad.append(i)
             out.append((t[0], t[1], t[2], w))
-            unit = unit and _is_unit_tangent(t)
-        # 1.69 water's bump-map stream shares the pointer; without a normal-mapped
-        # hint it is kept only if every vector is unit length (binary.go).
-        if not hint_wants_tangents(mesh.render_hint) and not unit:
+        # 1.69 water's bump-map stream shares the pointer (and sets texanim slots
+        # 0-2 and 4); without a normal-mapped hint the stream is kept when every
+        # vector is unit length, or, with no other slot set, when it holds a unit
+        # vector and every finite, non-zero one is unit length (binary.go, MDL-BIN-048).
+        all_unit = unit == count
+        mixed = unit > 0 and fill.other == 0 and not other_tex_anim
+        if not hint_wants_tangents(mesh.render_hint) and not all_unit and not mixed:
+            self.at("tangents")
+            for off, bits in nans:
+                self.warn_nan(off, bits)
             return
         mesh.tangents = out
+        if fill.bad:
+            self.tangent_fills.append(fill)
 
     def read_float_array_at(self, a, current):
         abs_ptr = self.go_to_pointer(a[0])
@@ -1090,7 +1238,7 @@ class _Decompiler:
         self.skip(4 + 12 + 12 + 4 + 4)
         length = self.read_f32()[0]
         trans_time = self.read_f32()[0]
-        root, _ = self.read_fixed_string(64)
+        root, _ = self.read_node_name(64)  # in its case until the nodes are read
         events_def, _ = self.read_array_def()
         anim = Animation(name, length, trans_time, root)
         if events_def[1] > 0 and events_def[0] != 0:
@@ -1102,8 +1250,11 @@ class _Decompiler:
                         t = self.read_f32()[0]
                         ename, _ = self.read_fixed_string(32)
                         anim.events.append((t, ename))
+        self.anim_stored_names, self.anim_stored_parent, self.anim_stored_cur = [], [], -1
         if root_node_ptr != 0:
             self.read_anim_node(anim, root_node_ptr, "NULL", 0)
+        matched, wide = stored_anim_root_match(root, self.anim_stored_names, self.anim_stored_parent)
+        anim.root = written_anim_root(root, matched, wide, anim.nodes)
         self.model.animations.append(anim)
         return None
 
@@ -1122,7 +1273,10 @@ class _Decompiler:
             return
 
         self.skip(24 + 4 + 4)
-        node_name, _ = self.read_fixed_string(32)
+        stored_name, node_name = self.read_node_name(32)
+        stored_index = len(self.anim_stored_names)
+        self.anim_stored_names.append(stored_name)
+        self.anim_stored_parent.append(self.anim_stored_cur)
         self.where = (anim.name, node_name, "the node header")
         self.skip(8)
         children_def, _ = self.read_array_def()
@@ -1145,7 +1299,7 @@ class _Decompiler:
 
         anim_mesh_verts = 0
         anim_faces_def = (0, 0, 0)
-        anim_p_vertex = anim_p_tex0 = 0
+        anim_p_vertex = anim_p_tex0 = anim_p_normals = 0
         if has_mesh and has_anim:
             mesh_start = self.p
             self.skip(8)
@@ -1155,6 +1309,8 @@ class _Decompiler:
             count_verts = self.read_u16()
             self.skip(2)
             anim_p_tex0 = self.read_i32()
+            self.seek(mesh_start + MESH_HEADER_P_MDX_NORMAL)
+            anim_p_normals = self.read_i32()
             anim_mesh_verts = count_verts
             self.seek(mesh_start + MESH_HEADER_SIZE)
         elif has_mesh:
@@ -1191,6 +1347,8 @@ class _Decompiler:
             self.skip(4)
 
         an = AnimNode(node_name, parent_name)
+        # the type the flags give, for a node the geometry lacks (MDL-NODE-044)
+        an.type = {3: "light", 5: "emitter", 33: "trimesh"}.get(node_flag, "")
 
         if has_mesh and has_anim and anim_mesh_verts > 0:
             header_end = self.p
@@ -1201,6 +1359,10 @@ class _Decompiler:
             if anim_p_tex0 >= 0:
                 self.at("tverts")
                 mesh.tverts = self.read_vec2_array_at(self.go_to_mdx_pointer(anim_p_tex0), anim_mesh_verts, mesh.tverts)
+            if anim_p_normals >= 0:
+                self.at("normals")
+                mesh.normals = self.read_vec3_array_at(self.go_to_mdx_pointer(anim_p_normals), anim_mesh_verts,
+                                                       mesh.normals)
             if anim_faces_def[1] > 0 and anim_faces_def[0] != 0:
                 self.read_faces(mesh, anim_faces_def)
             an.mesh = mesh
@@ -1216,16 +1378,25 @@ class _Decompiler:
         anim.nodes.append(an)
 
         child_ptrs, _ = self.read_pointer_array(children_def)
+        prev_cur = self.anim_stored_cur
+        self.anim_stored_cur = stored_index
         for cp in child_ptrs:
             if cp != 0:
                 self.read_anim_node(anim, cp, node_name, depth + 1)
+        self.anim_stored_cur = prev_cur
 
     def read_anim_controllers(self, an, node_flag, keys_def, data_def):
         keys = self.read_controller_keys(keys_def)
         if not keys:
             return
+        # a controller id given twice (MDL-CTRL-036): the last one's keys are kept
+        seen = set()
         for name, num_cols, k, bezier, def_cols in self.resolve_controller_defs(keys, node_flag, an.name):
             rows = self.read_controller_rows(name, data_def[0], k[2], k[3], k[1], num_cols)
+            if rows:
+                if name in seen:
+                    clear_anim_controller(an, name)
+                seen.add(name)
             if bezier and name != "position":
                 add_anim_bezier_keys(an, name, rows)
                 continue
@@ -1258,7 +1429,72 @@ def quaternion_to_angle_axis(q):
     if sin_half < _F32_1E6:
         return [0.0, 0.0, 1.0, 0.0]
     angle = f32(2.0 * math.atan2(sin_half, w))
-    return [f32(x / sin_half), f32(y / sin_half), f32(z / sin_half), angle]
+    return exact_axis_angle([f32(x / sin_half), f32(y / sin_half), f32(z / sin_half), angle], q)
+
+
+EXACT_AXIS_ANGLE_STEPS = 4
+
+
+def exact_axis_angle(aa, q):
+    """binary.go exactAxisAngle: an axis-angle within a few float32 steps of aa (or of
+    the negated axis with 4pi minus the angle) that axis_angle_to_quat turns back into
+    exactly q; aa when it already does or none is found."""
+    want = [f32_bits(v) for v in q]
+    if [f32_bits(v) for v in axis_angle_to_quat(aa)] == want:
+        return aa
+    if any(math.isnan(v) or math.isinf(v) for v in q):
+        return aa
+    r = _search_axis_angle(aa, q, want)
+    if r is not None:
+        return r
+    alt = [-aa[0], -aa[1], -aa[2], f32(4 * math.pi - aa[3])]
+    r = _search_axis_angle(alt, q, want)
+    if r is not None:
+        return r
+    return aa
+
+
+def _search_axis_angle(aa, q, want):
+    """binary.go searchAxisAngle: the angle first, then each axis component."""
+    for i in range(2 * EXACT_AXIS_ANGLE_STEPS + 1):
+        angle = f32_step(aa[3], _search_step(i))
+        if f32_bits(axis_angle_to_quat((aa[0], aa[1], aa[2], angle))[3]) != want[3]:
+            continue
+        axis = [aa[0], aa[1], aa[2]]
+        for c in range(3):
+            for j in range(2 * EXACT_AXIS_ANGLE_STEPS + 1):
+                trial = list(axis)
+                trial[c] = f32_step(aa[c], _search_step(j))
+                if f32_bits(axis_angle_to_quat((trial[0], trial[1], trial[2], angle))[c]) == want[c]:
+                    axis = trial
+                    break
+        cand = [axis[0], axis[1], axis[2], angle]
+        if [f32_bits(v) for v in axis_angle_to_quat(cand)] == want:
+            return cand
+    return None
+
+
+def _search_step(i):
+    """binary.go searchStep: the i-th offset of 0, +1, -1, +2, -2, ..."""
+    if i % 2 == 1:
+        return (i + 1) // 2
+    return -(i // 2)
+
+
+def f32_step(v, k):
+    """binary.go f32Step: v moved k float32 steps, both zeros between the smallest
+    negative and positive values; k == 0 returns v, a step onto zero gives +0."""
+    if k == 0:
+        return v
+    b = f32_bits(v)
+    if b >= 0x80000000:
+        b -= 0x100000000
+    if b < 0:
+        b = -0x80000000 - b
+    b += k
+    if b < 0:
+        b = -0x80000000 - b
+    return struct.unpack("<f", struct.pack("<I", b & 0xFFFFFFFF))[0]
 
 
 def runtime_width(def_cols, vals):
@@ -1336,6 +1572,20 @@ def add_anim_bezier_keys(an, name, rows):
         an.bezier.add(name)
 
 
+def clear_anim_controller(an, name):
+    """AnimNode.clearController: drop the named controller's keys and bezier mark."""
+    if name == "position":
+        an.position_keys = []
+        an.position_bezier = False
+        return
+    if name == "orientation":
+        an.orientation_keys = []
+        return
+    an.float_keys.pop(name, None)
+    an.color_keys.pop(name, None)
+    an.bezier.discard(name)
+
+
 def add_anim_key(an, name, t, vals):
     if name == "detonate":
         an.float_keys.setdefault("detonate", []).append((t, 1.0))
@@ -1364,13 +1614,105 @@ def _is_unit_tangent(t):
     return 0.98 < l2 < 1.02
 
 
+# --- bad tangents (binary_tangents.go) ---
+
+
+class _TangentFill:
+    """tangentFill: a mesh whose tangent stream holds bad vectors."""
+    __slots__ = ("node", "bad", "non_finite", "zero", "other")
+
+    def __init__(self, node):
+        self.node = node
+        self.bad = []
+        self.non_finite = 0
+        self.zero = 0
+        self.other = 0
+
+
+_FALLBACK_MIN = 2.0 ** -20
+
+
+def fill_tangents(d):
+    """fillTangents: replace each bad tangent with the one the game generates
+    for that vertex (MDL-MESH-043 on the binary's own lists), one warning per mesh."""
+    for f in d.tangent_fills:
+        n = f.node
+        m = n.mesh
+        gen, hand = _binary_mesh_tangents(m, _drawn_triangles(d, n), n.anim_mesh is not None)
+        fallback = 0
+        for i in f.bad:
+            if hand is not None and i < len(hand) and hand[i] != 0 and _is_unit_tangent(gen[i]):
+                g = gen[i]
+                m.tangents[i] = (g[0], g[1], g[2], hand[i])
+                continue
+            nv = m.normals[i] if i < len(m.normals) else (0.0, 0.0, 0.0)
+            m.tangents[i] = _fallback_tangent(nv)
+            fallback += 1
+        what = []
+        if f.non_finite:
+            what.append("%d NaN or infinite" % f.non_finite)
+        if f.zero:
+            what.append("%d zero" % f.zero)
+        if f.other:
+            what.append("%d not unit length" % f.other)
+        msg = ("mesh %s: %d of %d stored tangents are unusable (%s); filled with the tangents the game "
+               "generates for those vertices, the others kept as stored"
+               % (_go_quote(n.name), len(f.bad), len(m.tangents), ", ".join(what)))
+        if fallback:
+            msg += (". %d of them get none (no triangle with UVs and normals reaches them), so they get a "
+                    "tangent perpendicular to their normal" % fallback)
+        d.warn(WARN_GENERAL, 0, n.name, msg)
+
+
+def _drawn_triangles(d, n):
+    """drawnTriangles: the render index list's triangles, else the face records'."""
+    rl = d.render_lists.get(n)
+    if rl:
+        return [[rl[k], rl[k + 1], rl[k + 2]] for k in range(0, len(rl) - 2, 3)]
+    return [list(f.verts) for f in n.mesh.faces if all(0 <= v <= 0xFFFF for v in f.verts)]
+
+
+def _binary_mesh_tangents(m, tris, anim_mesh):
+    """binaryMeshTangents: generate_tangents on the mesh's own vertices; per
+    vertex (tangent, handedness), clones left out. (None, None) without UVs or normals."""
+    n = len(m.verts)
+    if n == 0 or len(m.tverts) < n or len(m.normals) < n:
+        return None, None
+    exp = ExpandedMesh()
+    exp.positions = list(m.verts[:n])
+    exp.uvs = list(m.tverts[:n])
+    exp.normals = list(m.normals[:n])
+    exp.face_verts = [list(t) for t in tris]
+    exp.orig_vert = list(range(n))
+    tan, hand = generate_tangents(exp, anim_mesh)
+    if tan is None or len(tan) < n:
+        return None, None
+    return tan[:n], hand[:n]
+
+
+def _fallback_tangent(nv):
+    """fallbackTangent: the normal rotated to (y, z, x), else the X then Y axis,
+    made perpendicular to the normal; handedness +1."""
+    x, y, z = nv
+    if f32(f32(f32(x * x) + f32(y * y)) + f32(z * z)) != 0:
+        x, y, z = game_normalize(nv)
+    for t in ((y, z, x), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)):
+        d = f32(f32(f32(x * t[0]) + f32(y * t[1])) + f32(z * t[2]))
+        p = (f32(t[0] - f32(x * d)), f32(t[1] - f32(y * d)), f32(t[2] - f32(z * d)))
+        if f32(f32(f32(p[0] * p[0]) + f32(p[1] * p[1])) + f32(p[2] * p[2])) > _FALLBACK_MIN:
+            p = game_normalize(p)
+            return (p[0], p[1], p[2], 1.0)
+    return (1.0, 0.0, 0.0, 1.0)
+
+
 # --- merged meshes (binary_merged.go) ---
 
 MERGE_TOLERANCE = 1e-3  # m
 
 
-def _mesh_tri(mesh, a, b, c):
-    """meshTri: (uv key, sorted side lengths), or None when an index is out of range."""
+def _mesh_tri(mesh, a, b, c, k=-1):
+    """meshTri: (uv key, sorted side lengths, mesh, vertex indices, k), or None when an index is out of
+    range. k is the triangle's index in the receiver's render list, or a donor triangle's face index."""
     idx = (a, b, c)
     for i in idx:
         if i < 0 or i >= len(mesh.verts):
@@ -1388,7 +1730,7 @@ def _mesh_tri(mesh, a, b, c):
         dx, dy, dz = p[0] - q[0], p[1] - q[1], p[2] - q[2]
         side.append(math.sqrt(dx * dx + dy * dy + dz * dz))
     side.sort()
-    return tuple(uv), side
+    return tuple(uv), side, mesh, idx, k
 
 
 class _TriPool:
@@ -1403,12 +1745,20 @@ class _TriPool:
         self.by_uv.setdefault(t[0], []).append(t)
         self.n += 1
 
-    def find(self, t):
+    def find(self, t, pref=None):
+        """find / findPreferring: the first of t's shape for which pref holds, else the first, else -1."""
+        first = -1
         for i, c in enumerate(self.by_uv.get(t[0], ())):
             if (abs(c[1][0] - t[1][0]) <= MERGE_TOLERANCE and abs(c[1][1] - t[1][1]) <= MERGE_TOLERANCE
                     and abs(c[1][2] - t[1][2]) <= MERGE_TOLERANCE):
-                return i
-        return -1
+                if pref is None or pref(c):
+                    return i
+                if first < 0:
+                    first = i
+        return first
+
+    def get(self, t, i):
+        return self.by_uv[t[0]][i]
 
     def take(self, t, i):
         del self.by_uv[t[0]][i]
@@ -1421,16 +1771,115 @@ class _TriPool:
         return p
 
 
+MERGE_NORMAL_TOLERANCE = 0.01
+
+
+def _dist3(a, b):
+    dx, dy, dz = a[0] - b[0], a[1] - b[1], a[2] - b[2]
+    return math.sqrt(dx * dx + dy * dy + dz * dz)
+
+
+def _cross3(a, b):
+    return (a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0])
+
+
+def _dot3(a, b):
+    return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+
+
+def _uv_at(m, i):
+    if i < len(m.tverts):
+        return (m.tverts[i][0], m.tverts[i][1])
+    return (0.0, 0.0)
+
+
+def _copy_corners(d, c):
+    """copyCorners: r such that corner j of d is corner (j+r)%3 of c, or None."""
+    found = -1
+    dm, dvi, cm, cvi = d[2], d[3], c[2], c[3]
+    for r in range(3):
+        fits = True
+        for j in range(3):
+            a, b = dvi[j], cvi[(j + r) % 3]
+            if _uv_at(dm, a) != _uv_at(cm, b):
+                fits = False
+                break
+            a2, b2 = dvi[(j + 1) % 3], cvi[(j + r + 1) % 3]
+            sd = _dist3(dm.verts[a], dm.verts[a2])
+            sc = _dist3(cm.verts[b], cm.verts[b2])
+            if abs(sd - sc) > MERGE_TOLERANCE:
+                fits = False
+            if not fits:
+                break
+        if not fits:
+            continue
+        if found >= 0:
+            return None
+        found = r
+    return found if found >= 0 else None
+
+
+def _tri_frame(p):
+    """triFrame: (first edge, in-plane perpendicular, face normal), or None."""
+    e1 = (p[1][0] - p[0][0], p[1][1] - p[0][1], p[1][2] - p[0][2])
+    e2 = (p[2][0] - p[0][0], p[2][1] - p[0][1], p[2][2] - p[0][2])
+    z = _cross3(e1, e2)
+    l1, lz = math.sqrt(_dot3(e1, e1)), math.sqrt(_dot3(z, z))
+    if l1 < 1e-9 or lz < 1e-12:
+        return None
+    x = (e1[0] * (1 / l1), e1[1] * (1 / l1), e1[2] * (1 / l1))
+    zz = (z[0] * (1 / lz), z[1] * (1 / lz), z[2] * (1 / lz))
+    return (x, _cross3(zz, x), zz)
+
+
+def _same_corner(m, a, b):
+    """sameCorner: one vertex, or a tangent clone of it (same position and UV)."""
+    if a == b:
+        return True
+    if a < 0 or b < 0 or a >= len(m.verts) or b >= len(m.verts) or m.verts[a] != m.verts[b]:
+        return False
+    if m.tverts:
+        if a >= len(m.tverts) or b >= len(m.tverts) or m.tverts[a] != m.tverts[b]:
+            return False
+    return True
+
+
+def apply_tangent_clones(d):
+    """applyTangentClones: point each face at the vertices its triangle of the
+    index list uses, when they are its own vertices or tangent clones of them
+    (MDL-BIN-049, MDL-MESH-043)."""
+    for n in d.model.nodes:
+        m = n.mesh
+        rl = d.render_lists.get(n) if d.render_lists else None
+        if m is None or not rl:
+            continue
+        for i, f in enumerate(m.faces):
+            if 3 * i + 2 >= len(rl):
+                break
+            want = [rl[3 * i], rl[3 * i + 1], rl[3 * i + 2]]
+            if want == list(f.verts):
+                continue
+            if all(_same_corner(m, f.verts[k], want[k]) for k in range(3)):
+                f.verts = list(want)
+                f.uvs = list(want)
+
+
 def unmerge_render_lists(d):
-    """unmergeRenderLists: put merged donors back (render 1), note or warn per receiver."""
+    """unmergeRenderLists: restore or fold merged donors, note or warn per receiver. Donors are matched in
+    two passes over the receivers: first only one whose every triangle has a copy where it lies in world
+    space, then any by shape alone."""
     if not d.render_lists:
         return
-    moves = set()  # nodes an animation moves: a donor among them was drawn still
-    for a in d.model.animations:
-        for an in a.nodes:
-            if len(an.position_keys) > 1 or len(an.orientation_keys) > 1:
-                moves.add(go_lower(an.name))
-    used = set()
+    parent_of = None
+    world = {}
+
+    def world_of(n):
+        w = world.get(n)
+        if w is None:
+            w = world[n] = world_vertices(parent_of, n)
+        return w
+
+    recs = []  # [r, rl, extra, unreadable, wr, donors: [(n, at, pairs)]]
     for r in d.model.nodes:
         rl = d.render_lists.get(r)
         if r.mesh is None or rl is None or len(rl) <= 3 * len(r.mesh.faces):
@@ -1438,7 +1887,7 @@ def unmerge_render_lists(d):
         extra = _TriPool()
         unreadable = 0
         for k in range(0, len(rl) - 2, 3):
-            t = _mesh_tri(r.mesh, rl[k], rl[k + 1], rl[k + 2])
+            t = _mesh_tri(r.mesh, rl[k], rl[k + 1], rl[k + 2], k // 3)
             if t is not None:
                 extra.add(t)
             else:
@@ -1451,41 +1900,482 @@ def unmerge_render_lists(d):
                     extra.take(t, i)
         if extra.n == 0 and unreadable == 0:
             continue
-        donors = []
-        for n in d.model.nodes:
+        if parent_of is None:
+            parent_of = resolve_geom_tree(d.model.nodes)[0]
+        recs.append([r, rl, extra, unreadable, world_of(r), []])
+    if not recs:
+        return
+    used = set()
+    for in_place in (True, False):
+        for rec in recs:
+            r, wr = rec[0], rec[4]
+            for at, n in enumerate(d.model.nodes):
+                m = n.mesh
+                if (n is r or m is None or id(n) in used or m.render != 0 or d.render_lists.get(n) or not m.faces
+                        or not equal_fold(m.bitmap, r.mesh.bitmap)):
+                    continue
+                wd = world_of(n)
+                trial = rec[2].copy()
+                ok = True
+                pairs = []  # each donor face and the copy it matched
+                for fi, f in enumerate(m.faces):
+                    t = _mesh_tri(m, f.verts[0], f.verts[1], f.verts[2], fi)
+                    i = -1
+                    if t is not None:
+                        i = trial.find(t, lambda c, t=t: _world_fits(wd, t[3], wr, c[3]))
+                    if i < 0 or (in_place and not _world_fits(wd, t[3], wr, trial.get(t, i)[3])):
+                        ok = False
+                        break
+                    pairs.append((t, trial.get(t, i)))
+                    trial.take(t, i)
+                if not ok:
+                    continue
+                rec[2] = trial
+                used.add(id(n))
+                rec[5].append((n, at, pairs))
+    motion = _merge_motion(d.model)
+    for r, rl, extra, unreadable, wr, matched in recs:
+        matched.sort(key=lambda x: x[1])
+        donors, folded_names = [], []
+        folded = []  # donor faces folded into r, and their copies
+        fold_why, shadow_off, restyled = [], [], []
+        for n, _at, pairs in matched:
             m = n.mesh
-            if (n is r or m is None or id(n) in used or m.render != 0 or d.render_lists.get(n) or not m.faces
-                    or not equal_fold(m.bitmap, r.mesh.bitmap)):
+            why = _fold_reason(parent_of, motion, r, n, wr, world_of(n), pairs)
+            if why:
+                folded.extend(pairs)
+                folded_names.append(n.name)
+                fold_why.append("%s (%s)" % (n.name, why))
+                if m.shadow != 0 and r.mesh.shadow != 0:
+                    m.shadow = 0
+                    shadow_off.append(n.name)
                 continue
-            trial = extra.copy()
-            ok = True
-            for f in m.faces:
-                t = _mesh_tri(m, f.verts[0], f.verts[1], f.verts[2])
-                i = trial.find(t) if t is not None else -1
-                if i < 0:
-                    ok = False
-                    break
-                trial.take(t, i)
-            if not ok:
-                continue
-            extra = trial
-            used.add(id(n))
             m.render = 1
+            if m.transparency_hint != r.mesh.transparency_hint:
+                # the stored tree was sorted by the stored hint
+                d.stored_hints[n] = m.transparency_hint
+            diff = _copy_drawing_state(r, n)
+            if diff:
+                restyled.append("%s (%s)" % (n.name, ", ".join(diff)))
+            _donor_corners(n, pairs)
             donors.append(n.name)
         lost = extra.n + unreadable
-        d.model.render_merges.append((r.name, donors, lost))
+        d.model.render_merges.append((r.name, donors, lost, folded_names))
+        _fold_copies(r, folded)
+        _drop_copy_vertices(r, rl)
         if donors:
             d.note(WARN_GENERAL, 0, r.name,
                    "its render list also draws %s, merged into it by the tool that compiled the model (render 0 and no "
                    "render list of their own): written with render 1, which draws the same as separate meshes"
                    % ", ".join(donors))
-        moving = [n for n in donors if go_lower(n) in moves]
-        if moving:
+        if restyled:
             d.note(WARN_GENERAL, 0, r.name,
-                   "this model's animations move %s, which the game drew still, as part of this mesh's render list: with "
-                   "render 1, the animations move it" % ", ".join(moving))
+                   "the game drew the triangles of %s with this mesh's drawing settings, which differ from their own: "
+                   "given this mesh's, so they draw as before" % "; ".join(restyled))
+        if fold_why:
+            msg = ("its render list also draws %s, merged into it by the tool that compiled the model, which as "
+                   "separate meshes would draw differently from the original: their copies are written as this mesh's "
+                   "faces, as the game drew them, and they keep render 0" % "; ".join(fold_why))
+            if shadow_off:
+                msg += ". %s get shadow 0, as the copies in this mesh now cast their shadow" % ", ".join(shadow_off)
+            d.note(WARN_GENERAL, 0, r.name, msg)
         if lost > 0:
             d.warn(WARN_GENERAL, 0, r.name,
                    "%d of the triangles its render list draws are in no mesh's faces: ASCII has no place for them, so a "
                    "decompile, repair or recompile loses them" % lost)
 
+
+MERGE_WORLD_TOLERANCE = 1e-3  # m: the round-trip checker's triangle pairing distance
+MERGE_KEY_TOLERANCE = 1e-4
+
+
+def _world_fits(wa, a, wb, b):
+    """worldFits: the triangle at a of wa lies on the one at b of wb, corners in the same turn."""
+    for r in range(3):
+        if all(_dist3(wa[a[j]], wb[b[(j + r) % 3]]) <= MERGE_WORLD_TOLERANCE for j in range(3)):
+            return True
+    return False
+
+
+def _merge_motion(model):
+    """newMergeMotion: (moves, alpha, self_illum) by lower-case node name."""
+    geom = {}
+    for n in model.nodes:
+        geom.setdefault(go_lower(n.name), n)
+    moves, alpha, self_illum = set(), {}, {}
+    for a in model.animations:
+        for an in a.nodes:
+            k = go_lower(an.name)
+            g = geom.get(k)
+            if g is not None and _anim_moves(g, an):
+                moves.add(k)
+            for key in an.float_keys.get("alpha", ()):
+                alpha.setdefault(k, []).append(key[1])
+            for key in an.color_keys.get("selfillumcolor", ()):
+                self_illum.setdefault(k, []).append(key[1])
+    return moves, alpha, self_illum
+
+
+def _anim_moves(g, an):
+    """animMoves: an's keys put g anywhere but its rest pose."""
+    for k in an.position_keys:
+        if not _near_vec3(k[1], g.position):
+            return True
+    for k in an.orientation_keys:
+        if not _same_rotation(k[1], g.orientation):
+            return True
+    s = 1.0 if g.scale == 0 else g.scale
+    for k in an.float_keys.get("scale", ()):
+        if not _near_f(k[1], s):
+            return True
+    return False
+
+
+def _near_f(a, b):
+    return abs(a - b) <= MERGE_KEY_TOLERANCE
+
+
+def _near_vec3(a, b):
+    return _near_f(a[0], b[0]) and _near_f(a[1], b[1]) and _near_f(a[2], b[2])
+
+
+def _same_rotation(a, b):
+    for v in ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0)):
+        if not _near_vec3(rotate_vector_axis_angle(v, a), rotate_vector_axis_angle(v, b)):
+            return False
+    return True
+
+
+def _fold_reason(parent_of, motion, r, n, wr, wd, pairs):
+    """foldReason: why donor n, restored, would draw other than its copies in r, or ""."""
+    moves, alpha, self_illum = motion
+    rc, dc = parent_chain(parent_of, r), parent_chain(parent_of, n)
+    in_r, in_d = set(rc), set(dc)
+    for x in dc:
+        if x not in in_r and go_lower(x.name) in moves:
+            return "an animation moves %s, but the game drew it as part of %s" % (x.name, r.name)
+    for x in rc:
+        if x not in in_d and go_lower(x.name) in moves:
+            return "an animation moves %s, with the copies" % x.name
+    for x in (r, n):
+        for v in alpha.get(go_lower(x.name), ()):
+            if not _near_f(v, r.mesh.alpha):
+                return "an animation changes the alpha of %s" % x.name
+        for v in self_illum.get(go_lower(x.name), ()):
+            if not _near_vec3(v, r.mesh.self_illum_color):
+                return "an animation changes the self-illumination of %s" % x.name
+    for d, c in pairs:
+        if _world_fits(wd, d[3], wr, c[3]):
+            continue
+        for x in dc:
+            if x not in in_r and x.scale != 0 and x.scale != 1:
+                return "the game drew it without the scale %s of %s" % (fmt_float(x.scale), x.name)
+        return "the game drew it elsewhere than the mesh itself is"
+    return ""
+
+
+def _same_f(a, b):
+    return a == b or (a != a and b != b)
+
+
+def _is_null_name(s):
+    return s == "" or equal_fold(s, "NULL")
+
+
+def _copy_drawing_state(r, n):
+    """copyDrawingState: give donor n receiver r's drawing settings; the names of those that differed."""
+    rm, m = r.mesh, n.mesh
+    diff = []
+    for name, attr in (("diffuse", "diffuse"), ("ambient", "ambient"), ("specular", "specular")):
+        a, b = getattr(m, attr), getattr(rm, attr)
+        if not all(_same_f(a[i], b[i]) for i in range(3)):
+            setattr(m, attr, b)
+            diff.append(name)
+    if not _same_f(m.shininess, rm.shininess):
+        m.shininess = rm.shininess
+        diff.append("shininess")
+    for name, attr in (("texture1", "texture1"), ("texture2", "texture2"), ("materialname", "material_name"),
+                       ("renderhint", "render_hint")):
+        a, b = getattr(m, attr), getattr(rm, attr)
+        if not equal_fold(a, b) and not (_is_null_name(a) and _is_null_name(b)):
+            setattr(m, attr, b)
+            diff.append(name)
+    for name, attr in (("transparencyhint", "transparency_hint"), ("tilefade", "tile_fade"),
+                       ("rotatetexture", "rotate_texture")):
+        if getattr(m, attr) != getattr(rm, attr):
+            setattr(m, attr, getattr(rm, attr))
+            diff.append(name)
+    if not _same_f(m.alpha, rm.alpha):
+        m.alpha = rm.alpha
+        diff.append("alpha")
+        if "alpha" in r.declared:
+            n.declared.add("alpha")
+    a, b = m.self_illum_color, rm.self_illum_color
+    if not all(_same_f(a[i], b[i]) for i in range(3)):
+        m.self_illum_color = b
+        diff.append("selfillumcolor")
+        if "selfillumcolor" in r.declared:
+            n.declared.add("selfillumcolor")
+    return diff
+
+
+def _fold_copies(r, folded):
+    """foldCopies: write the copies of folded donor faces as faces of r, in r's render list order."""
+    if not folded:
+        return
+    folded = sorted(folded, key=lambda p: p[1][4])
+    m = r.mesh
+    base = len(m.faces)
+    at = {}  # id(donor mesh) -> {donor face: r's new face}
+    for i, (dt, _c) in enumerate(folded):
+        at.setdefault(id(dt[2]), {})[dt[4]] = base + i
+    adj = len(m.stored_adjacency) == len(m.faces)
+    for dt, c in folded:
+        dm = dt[2]
+        df = dm.faces[dt[4]]
+        v = (c[3][0], c[3][1], c[3][2])
+        m.faces.append(Face(v, df.smooth_group, v, df.material))
+        if not adj:
+            continue
+        a = [-1, -1, -1]
+        rot = _copy_corners(dt, c)
+        if rot is not None and len(dm.stored_adjacency) == len(dm.faces):
+            for e in range(3):
+                j = dm.stored_adjacency[dt[4]][e]
+                nf = at[id(dm)].get(j)
+                if nf is not None and j >= 0 and nf <= 32767:
+                    a[(e + rot) % 3] = nf
+        m.stored_adjacency.append(a)
+
+
+def _drop_copy_vertices(r, rl):
+    """dropCopyVertices: remove the vertices r's render list used and none of its faces uses."""
+    m = r.mesh
+    nv = len(m.verts)
+    used = [False] * nv
+    for f in m.faces:
+        for k in range(3):
+            if f.verts[k] != f.uvs[k]:
+                return 0
+            v = f.verts[k]
+            if 0 <= v < nv:
+                used[v] = True
+    drop = [False] * nv
+    anyd = False
+    for v in rl:
+        if v < nv and not used[v]:
+            drop[v] = True
+            anyd = True
+    if not anyd:
+        return 0
+    keep = [i for i in range(nv) if not drop[i]]
+    if not _keep_vertices(r, keep):
+        return 0
+    return nv - len(keep)
+
+
+def _vertex_lists_ok(n):
+    """vertexListsOK: every per-vertex list full (or empty), faces index vertices and UVs alike."""
+    m = n.mesh
+    if (n.aabb is not None or n.anim_mesh is not None or m.corner_normals or m.mirror_list
+            or len(m.tex_indices0) + len(m.tex_indices1) + len(m.tex_indices2) + len(m.tex_indices3) > 0):
+        return False
+    nv = len(m.verts)
+
+    def full(lst):
+        return len(lst) == 0 or len(lst) == nv
+
+    if not all(full(x) for x in (m.normals, m.tangents, m.colors, m.tverts, m.tverts1, m.tverts2, m.tverts3)):
+        return False
+    if n.skin is not None and not full(n.skin.weights):
+        return False
+    if n.dangly is not None and not full(n.dangly.constraints):
+        return False
+    for f in m.faces:
+        if list(f.verts) != list(f.uvs):
+            return False
+    return True
+
+
+def _keep_vertices(n, keep):
+    """keepVertices: keep only the vertices keep (ascending) of n's mesh and renumber its faces."""
+    if not _vertex_lists_ok(n):
+        return False
+    m = n.mesh
+    nv = len(m.verts)
+    new_idx = [-1] * nv
+    for ni, oi in enumerate(keep):
+        new_idx[oi] = ni
+    for f in m.faces:
+        for k in range(3):
+            v = f.verts[k]
+            if 0 <= v < nv and new_idx[v] < 0:
+                return False
+
+    def pick(lst):
+        if not lst:
+            return lst
+        return [lst[oi] for oi in keep]
+
+    m.verts, m.normals, m.colors = pick(m.verts), pick(m.normals), pick(m.colors)
+    m.tverts, m.tverts1, m.tverts2, m.tverts3 = pick(m.tverts), pick(m.tverts1), pick(m.tverts2), pick(m.tverts3)
+    m.tangents = pick(m.tangents)
+    if n.skin is not None and n.skin.weights:
+        n.skin.weights = pick(n.skin.weights)
+    if n.dangly is not None and n.dangly.constraints:
+        n.dangly.constraints = pick(n.dangly.constraints)
+    for f in m.faces:
+        for k in range(3):
+            v = f.verts[k]
+            if 0 <= v < nv:
+                f.verts[k] = new_idx[v]
+                f.uvs[k] = new_idx[v]
+    return True
+
+
+def _copy_vertex(n, v):
+    """copyVertex: append a copy of vertex v, with everything listed per vertex; its index."""
+    m = n.mesh
+    nv = len(m.verts)
+    for attr in ("normals", "colors", "tverts", "tverts1", "tverts2", "tverts3", "tangents"):
+        lst = getattr(m, attr)
+        if len(lst) == nv:
+            lst.append(lst[v])
+    m.verts.append(m.verts[v])
+    if n.skin is not None and len(n.skin.weights) == nv:
+        n.skin.weights.append(n.skin.weights[v])
+    if n.dangly is not None and len(n.dangly.constraints) == nv:
+        n.dangly.constraints.append(n.dangly.constraints[v])
+    return nv
+
+
+def _donor_corners(n, pairs):
+    """donorCorners: give a donor put back the normals, tangents and handedness its copies were drawn with."""
+    m = n.mesh
+    nv = len(m.verts)
+    if nv == 0 or not pairs:
+        return
+    cm = pairs[0][1][2]
+    use_n = len(m.normals) >= nv and len(cm.normals) >= len(cm.verts)
+    use_t = len(m.tangents) >= nv and len(cm.tangents) >= len(cm.verts)
+    if not use_n and not use_t:
+        return
+    ms = []
+    best, best_area = -1, 0.0
+    for d, c in pairs:
+        r = _copy_corners(d, c)
+        if r is None:
+            continue
+        dp = [tuple(d[2].verts[d[3][j]]) for j in range(3)]
+        cp = [tuple(c[2].verts[c[3][(j + r) % 3]]) for j in range(3)]
+        e1 = (dp[1][0] - dp[0][0], dp[1][1] - dp[0][1], dp[1][2] - dp[0][2])
+        e2 = (dp[2][0] - dp[0][0], dp[2][1] - dp[0][1], dp[2][2] - dp[0][2])
+        z = _cross3(e1, e2)
+        a = math.sqrt(_dot3(z, z))
+        if a > best_area:
+            best, best_area = len(ms), a
+        ms.append((d, c, r, dp, cp))
+    if best < 0:
+        return
+    fd = _tri_frame(ms[best][3])
+    fc = _tri_frame(ms[best][4])
+    if fd is None or fc is None:
+        return
+
+    def to_donor(v):
+        n0 = n1 = n2 = 0.0
+        for a in range(3):
+            k = fc[a][0] * v[0] + fc[a][1] * v[1] + fc[a][2] * v[2]
+            n0 += k * fd[a][0]
+            n1 += k * fd[a][1]
+            n2 += k * fd[a][2]
+        return (n0, n1, n2)
+
+    zero = (0.0, 0.0, 0.0)
+
+    def same(a, b):  # values: (normal, tangent, handedness)
+        if use_n and _dist3(a[0], b[0]) > MERGE_NORMAL_TOLERANCE:
+            return False
+        return not use_t or (_dist3(a[1], b[1]) <= MERGE_NORMAL_TOLERANCE and (a[2] < 0) == (b[2] < 0))
+
+    def own(v):
+        nn = m.normals[v] if use_n else zero
+        if use_t:
+            t = m.tangents[v]
+            return (nn, (t[0], t[1], t[2]), t[3])
+        return (nn, zero, 0.0)
+
+    groups = [None] * nv  # per vertex: [[values, [(face, corner)]]]
+    for d, c, r, dp, cp in ms:
+        fits = True
+        for j in range(3):
+            k = (j + 1) % 3
+            ed = (dp[k][0] - dp[j][0], dp[k][1] - dp[j][1], dp[k][2] - dp[j][2])
+            ec = to_donor((cp[k][0] - cp[j][0], cp[k][1] - cp[j][1], cp[k][2] - cp[j][2]))
+            fits = _dist3(ed, ec) <= MERGE_TOLERANCE
+            if not fits:
+                break
+        if not fits:
+            continue
+        for j in range(3):
+            cv = c[3][(j + r) % 3]
+            wn = to_donor(cm.normals[cv]) if use_n else zero
+            if use_t:
+                t = cm.tangents[cv]
+                want = (wn, to_donor((t[0], t[1], t[2])), t[3])
+            else:
+                want = (wn, zero, 0.0)
+            v = d[3][j]
+            gs = groups[v]
+            if gs is None:
+                gs = groups[v] = []
+            for g in gs:
+                if same(g[0], want):
+                    g[1].append((d[4], j))
+                    break
+            else:
+                gs.append([want, [(d[4], j)]])
+
+    def set_values(v, want):
+        if use_n and _dist3(m.normals[v], want[0]) > MERGE_NORMAL_TOLERANCE:
+            m.normals[v] = (f32(want[0][0]), f32(want[0][1]), f32(want[0][2]))
+        if use_t:
+            t = m.tangents[v]
+            if _dist3((t[0], t[1], t[2]), want[1]) > MERGE_NORMAL_TOLERANCE or (t[3] < 0) != (want[2] < 0):
+                m.tangents[v] = (f32(want[1][0]), f32(want[1][1]), f32(want[1][2]), want[2])
+
+    used_by_face = [False] * nv
+    for f in m.faces:
+        for k in range(3):
+            v = f.verts[k]
+            if 0 <= v < nv:
+                used_by_face[v] = True
+    split = _vertex_lists_ok(n)
+    for v in range(nv):
+        gs = groups[v]
+        if not gs:
+            continue
+        home = 0
+        if len(gs) > 1:
+            o = own(v)
+            for gi, g in enumerate(gs):
+                if same(g[0], o):
+                    home = gi
+                    break
+        set_values(v, gs[home][0])
+        if not split:
+            continue
+        for gi, g in enumerate(gs):
+            if gi == home:
+                continue
+            u = -1
+            for x in range(nv):
+                if x != v and not used_by_face[x] and _same_corner(m, v, x) and same(own(x), g[0]):
+                    u = x
+                    break
+            if u < 0:
+                u = _copy_vertex(n, v)
+                set_values(u, g[0])
+            for fi, j in g[1]:
+                m.faces[fi].verts[j] = u
+                m.faces[fi].uvs[j] = u

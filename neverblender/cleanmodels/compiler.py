@@ -13,21 +13,24 @@ Layout:
 
 import struct
 
-from .compiler_buf import PatchBuf
+from .compiler_buf import PatchBuf, encode_str
 from .compiler_controllers import ControllersMixin
 from .compiler_mesh import CompileError, MeshMixin, anim_sets, anim_vertex_major
 from .compiler_node import NodeMixin
 from .compiler_order import reorder_children
 from .compiler_skinbind import SkinBindMixin, SkinBindPatch
-from .compiler_tree import is_root_parent, node_occurrences, pair_anim_nodes_to_geom, resolve_anim_tree, \
-    resolve_geom_tree
+from .compiler_tree import anim_node_numbers, is_root_parent, node_occurrences, pair_anim_nodes_to_geom, prune_anim_tree, \
+    resolve_anim_tree, resolve_geom_tree
 from .f32 import f32
+from .parser import new_parsed_light_data
+from .types import EmitterData, Node
 from .gomath import go_lower, go_quote
 from .gostr import equal_fold, go_upper
 from .vec import model_bounds
 
 MESH_HEADER_SIZE = 512
 MAX_DROPPED_NAMED = 5
+MAX_NODE_NAME = 31  # compiler_names.go maxNodeName
 
 __all__ = ["CompileError", "compile", "compile_file"]
 
@@ -58,6 +61,7 @@ def compile(model, supermodel_dirs=(), resource_dirs=(), warn=None):  # noqa: A0
         else:
             c.assign_node_ids(root)
         c.warn_dropped_geometry()
+        c.warn_cut_names()
         c.resolve_part_skeleton(supermodel_dirs, warn)
 
     c.write_model()
@@ -70,6 +74,34 @@ def compile_file(model, path, supermodel_dirs=(), resource_dirs=(), warn=None):
     data = compile(model, supermodel_dirs, resource_dirs, warn)
     with open(path, "wb") as f:
         f.write(data)
+
+
+def _name_len(name):
+    return len(encode_str(name))
+
+
+def _cut_node_name(name):
+    """cutNodeName: name as the binary stores it (fixed_str keeps 31 bytes)."""
+    d = encode_str(name)
+    if len(d) > MAX_NODE_NAME:
+        return d[:MAX_NODE_NAME].decode("latin-1")
+    return name
+
+
+def _cut_name_warning(anim, name, others):
+    """cutNameWarning (compiler_names.go)."""
+    cut = _cut_node_name(name)
+    msg = "node %s: its name has %d characters and is cut to %d, as the game's compiler does: %s" % (
+        go_quote(name), _name_len(name), MAX_NODE_NAME, go_quote(cut))
+    if anim != "":
+        msg = "animation %s: %s" % (go_quote(anim), msg)
+    for o in others:
+        if equal_fold(o, name) or not equal_fold(_cut_node_name(o), cut):
+            continue
+        if _name_len(o) <= MAX_NODE_NAME:
+            return msg + ", which is the name of node %s, so the game cannot tell the two apart" % go_quote(o)
+        return msg + ", which node %s is also cut to, so the game cannot tell the two apart" % go_quote(o)
+    return msg
 
 
 def _summarise_dropped(kind, names):
@@ -108,6 +140,7 @@ class Compiler(NodeMixin, MeshMixin, ControllersMixin, SkinBindMixin):
         self.geom_node_index = gi
         self.geom_occur = node_occurrences(model.nodes)
         self.anim_geom_pair = {}
+        self.anim_numbers = {}
         self.last_expanded = None
         self.merge_anim = None    # animmesh sets taking part in the vertex merge
         self.dangly_constraints_ptr_pos = 0
@@ -153,8 +186,8 @@ class Compiler(NodeMixin, MeshMixin, ControllersMixin, SkinBindMixin):
 
     def assign_node_ids_from_supermodel(self, root, sm):
         """assignNodeIDsFromSupermodel: a node at a path the supermodel has takes its
-        number, any other child of a matched node -1, the rest count_nodes + 1 +
-        declaration index."""
+        number (even -1: the walk goes on through it), any other child of a matched
+        node -1, the rest count_nodes + 1 + declaration index."""
         base = sm.count + 1
         decl = self.declaration_index()
         match = {}
@@ -167,7 +200,8 @@ class Compiler(NodeMixin, MeshMixin, ControllersMixin, SkinBindMixin):
             else:
                 p = match.get(parent)
                 sn = p.child(n.name) if p is not None else None
-                if sn is not None and sn.number >= 0:
+                if sn is not None:
+                    # -1 where the supermodel has -1; the walk goes on through it
                     self.node_ids[n] = sn.number
                     match[n] = sn
                 elif p is not None:
@@ -287,6 +321,24 @@ class Compiler(NodeMixin, MeshMixin, ControllersMixin, SkinBindMixin):
         if names:
             self.warn(_summarise_dropped("geometry", names))
 
+    def warn_cut_names(self):
+        """warnCutNames: every node name compile cuts to 31 characters (compiler_names.go)."""
+        if self.warn is None:
+            return
+        geom = [n.name for n in self.model.nodes if n is not None and n in self.node_ids]
+        for name in geom:
+            if _name_len(name) > MAX_NODE_NAME:
+                self.warn(_cut_name_warning("", name, geom))
+        for a in self.model.animations:
+            names = [an.name for an in a.nodes]
+            others = geom + names
+            warned = set()
+            for name in names:
+                if _name_len(name) <= MAX_NODE_NAME or name in warned or any(equal_fold(g, name) for g in geom):
+                    continue
+                warned.add(name)
+                self.warn(_cut_name_warning(a.name, name, others))
+
     def warn_dropped_anim(self, anim, visited):
         if self.warn is None:
             return
@@ -379,9 +431,15 @@ class Compiler(NodeMixin, MeshMixin, ControllersMixin, SkinBindMixin):
                 break
         if root_an is None and anim.nodes:
             root_an = anim.nodes[0]
+        self.anim_numbers = anim_node_numbers(anim.nodes, root_an, self.model.root_node(), self.children_of,
+                                              self.node_ids)
         if root_an is not None:
-            visited = set()
-            root_off, count = self.write_anim_tree(root_an, anim_children, visited)
+            # The game cuts the tree to its animroot (MDL-NODE-045) but counts
+            # the nodes it cut (MDL-NODE-042).
+            children, pruned = prune_anim_tree(root_an, anim_children, anim.root)
+            visited = set(pruned)
+            root_off, count = self.write_anim_tree(root_an, children, visited)
+            count += len(pruned)
             self.warn_dropped_anim(anim, visited)
         core.patch_u32(root_ptr_off, root_off)
         core.patch_u32(count_nodes_off, count)
@@ -419,6 +477,7 @@ class Compiler(NodeMixin, MeshMixin, ControllersMixin, SkinBindMixin):
         content = 1
         has_light = has_emitter = has_ref = has_mesh = has_skin = has_anim_mesh = False
         has_dangly = has_aabb = mesh_ctrl_only = False
+        declared = None  # a geometry-less node's stand-in, for its light or emitter header
         if geom is not None:
             gf = geom.node_type_flag()
             if gf & 0x02:
@@ -449,10 +508,28 @@ class Compiler(NodeMixin, MeshMixin, ControllersMixin, SkinBindMixin):
             elif gf & 0x20 and (an.float_keys.get("alpha") or an.color_keys.get("selfillumcolor")):
                 content |= 0x20
                 mesh_ctrl_only = True
+        else:
+            # a node the geometry lacks takes its type word's type, whatever keys
+            # it has (MDL-NODE-044); the other mesh words get the mesh flag and
+            # header, reference and camera stay dummies (not probed)
+            t = go_lower(an.type)
+            if t == "light":
+                has_light = True
+                content |= 0x02
+                declared = Node(an.name)
+                declared.light = new_parsed_light_data()
+            elif t == "emitter":
+                has_emitter = True
+                content |= 0x04
+                declared = Node(an.name)
+                declared.emitter = EmitterData()
+            elif _is_mesh_node_type(t):
+                content |= 0x20
+                mesh_ctrl_only = True
 
         core.zeros(24)
         core.i32(0)
-        core.i32(self.node_ids.get(geom, 0) if geom is not None else 0)
+        core.i32(self.anim_numbers[an])  # node_number (MDL-NODE-040)
         core.fixed_str(an.name, 32)
         core.i32(0)
         core.i32(parent_off)
@@ -462,12 +539,13 @@ class Compiler(NodeMixin, MeshMixin, ControllersMixin, SkinBindMixin):
         ctrl = [core.placeholder() for _ in range(6)]
         core.u32(content)
 
-        if has_light and geom is not None:
-            self.write_light_header(geom)
+        header_node = geom if geom is not None else declared
+        if has_light and header_node is not None:
+            self.write_light_header(header_node)
         elif has_light:
             core.zeros(92)
-        if has_emitter and geom is not None:
-            self.write_emitter_header(geom)
+        if has_emitter and header_node is not None:
+            self.write_emitter_header(header_node)
         elif has_emitter:
             core.zeros(216)
         if has_ref and geom is not None:
@@ -646,3 +724,8 @@ def _plural_classification_warning(cls):
 def _i32(v):
     v &= 0xFFFFFFFF
     return v - 0x100000000 if v >= 0x80000000 else v
+
+
+def _is_mesh_node_type(t):
+    """compiler.go isMeshNodeType: an ASCII node type word that makes a mesh."""
+    return go_lower(t) in ("trimesh", "skin", "animmesh", "danglymesh", "aabb")
