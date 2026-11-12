@@ -183,6 +183,9 @@ class NVB_OT_mdlexport(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
             nvb_mdl.Mdl.generate_ascii(mdl_base, ascii_lines, options)
             with open(os.fsencode(options.filepath), 'w', newline='\r\n', encoding='latin-1', errors='replace') as f:
                 f.write('\n'.join(ascii_lines))
+            # Compiling writes cleanmodels' <name>.wok for a model with an aabb
+            # node (both the program and the built-in compiler); the walkmesh
+            # export below comes after it and replaces it
             self.cleanmodels_after_export(options)
             # Export walkmesh for MDL
             if options.geom_walkmesh:
