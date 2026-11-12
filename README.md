@@ -74,7 +74,8 @@ Everything in Neverblender 4.0 (the last Neverwinter Vault release), plus:
 - **Binary models export directly**: *Compile to Binary* in the export options
   writes game-ready binaries with cleanmodels' compiler built in, the same
   bytes the cleanmodels program writes, with or without cleanmodels installed
-  (walkmeshes stay ASCII).
+  (walkmeshes stay ASCII). Either way a tile also gets the `.wok` cleanmodels
+  writes beside it; with *Export Walkmesh* on, NeverBlender's own replaces it.
 - **PLT textures**: *File > Import / Export > NWN PLT Texture (.plt)*, and
   *Image > Setup PLT Layer Images* in the image editor; an optional autoreload
   of PLT files changed on disk (add-on preferences).

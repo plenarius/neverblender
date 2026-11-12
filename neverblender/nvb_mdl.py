@@ -207,7 +207,10 @@ class Mdl():
             data = f.read()
         dirs = cleanmodels.lookup_dirs(mdl_filepath, game_dir=options.cleanmodels_game_dir)
         name = os.path.basename(mdl_filepath)
-        model = cleanmodels.decompile(data, dirs)
+        # Materials (.mtr) are looked up in the same folders, as the
+        # cleanmodels program does: they tell the decompiler which meshes are
+        # normal-mapped, whose generated tangents a compile makes again.
+        model = cleanmodels.decompile(data, dirs, material_dirs=dirs)
         for w in model.warnings:
             text = f"{name}: {w.node + ': ' if w.node else ''}{w.message}"
             print("Neverblender: " + text)

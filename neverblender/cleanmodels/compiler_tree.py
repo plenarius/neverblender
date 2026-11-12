@@ -85,3 +85,96 @@ def pair_anim_nodes_to_geom(anim_nodes, geom_occur):
             idx = len(occ) - 1
         out[an] = occ[idx]
     return out
+
+
+def anim_node_numbers(nodes, root, geom_root, children_of, node_ids):
+    """animNodeNumbers (nwn-mdl-spec MDL-NODE-040): each animation node's part
+    number, found by walking its path down the geometry tree. A matched node
+    takes the geometry node's number; one the walk does not find gets -1 under
+    a matched parent, otherwise its declaration index in the animation."""
+    parent_of, _ = resolve_anim_tree(nodes)
+    decl = {an: i for i, an in reversed(list(enumerate(nodes)))}
+    out = {}
+    match = {}
+
+    def number_one(an):
+        out[an] = decl[an]
+        g = None
+        parent_matched = False
+        if an is root:
+            g = geom_root
+        else:
+            p = parent_of.get(an)
+            pg = match.get(p) if p is not None else None
+            if pg is not None:
+                parent_matched = True
+                for ch in children_of(pg):
+                    if equal_fold(ch.name, an.name):
+                        g = ch
+                        break
+        if g is not None and g in node_ids:
+            match[an] = g
+            out[an] = node_ids[g]
+        elif parent_matched:
+            out[an] = -1
+
+    for an in nodes:
+        # Number the unnumbered ancestors first, root-most first; a parent
+        # cycle stops at a node already on the chain.
+        chain = []
+        on_chain = set()
+        cur = an
+        while cur is not None and cur not in out and cur not in on_chain:
+            chain.append(cur)
+            on_chain.add(cur)
+            cur = parent_of.get(cur) if cur is not root else None
+        for n in reversed(chain):
+            number_one(n)
+    return out
+
+
+def _reachable(root, children):
+    """orderedReachable: the nodes reachable from root, depth first, each once."""
+    out = []
+    seen = set()
+    stack = [root]
+    while stack:
+        an = stack.pop()
+        if an in seen:
+            continue
+        seen.add(an)
+        out.append(an)
+        stack.extend(reversed(children.get(an, ())))
+    return out
+
+
+def prune_anim_tree(root, children, anim_root):
+    """pruneAnimTree: cut an animation's tree to its animroot as the game's
+    compiler does (MDL-NODE-045). Returns (children to write with, pruned)."""
+    if root is None or not anim_root or equal_fold(anim_root, "NULL"):
+        return children, []
+    parent = {}
+    seen = set()
+    found = None
+    stack = [root]
+    while stack:
+        an = stack.pop()
+        if an in seen:
+            continue
+        seen.add(an)
+        if an.name == anim_root:
+            found = an
+            break
+        for ch in reversed(children.get(an, ())):
+            if ch not in seen:
+                parent[ch] = an
+                stack.append(ch)
+    if found is None or found is root:
+        return children, []
+    kept = dict(children)
+    n = found
+    while n is not root:
+        kept[parent[n]] = [n]
+        n = parent[n]
+    in_kept = set(_reachable(root, kept))
+    return kept, [an for an in _reachable(root, children) if an not in in_kept]

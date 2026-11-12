@@ -3,6 +3,7 @@
 from .controllers import EMITTER_DECLARED_NAMES
 from .f32 import fmt_float, fmt_vec3
 from .types import ANIM_COLOR_CONTROLLERS, ANIM_FLOAT_CONTROLLERS, VEC3_ZERO
+from .compiler_tree import resolve_geom_tree
 from .gostr import equal_fold, go_lower
 
 MAX_NODE_DEPTH = 10000
@@ -41,13 +42,24 @@ def write(model):
     return "".join(w.out)
 
 
+def write_walkmesh(model):
+    """Return the model's walkmesh (.wok) as ASCII text, or None without an aabb node
+    (writer.go WriteWalkmesh)."""
+    node = next((n for n in model.nodes if n is not None and n.aabb is not None), None)
+    if node is None:
+        return None
+    w = _Writer(model.use_texture0)
+    w.raw("# Rewritten by cleanmodels\n")
+    w.raw("#MAXWALKMESH  ASCII\n")
+    w.raw("beginwalkmeshgeom %s\n" % model.name)
+    w.write_node(node)
+    w.raw("endwalkmeshgeom %s\n" % model.name)
+    return "".join(w.out)
+
+
 def write_file(model, path):
     with open(path, "w", encoding="latin-1", newline="\n") as f:
         f.write(write(model))
-
-
-def _uint64(v):
-    return v + (1 << 64) if v < 0 else v
 
 
 class _Writer:
@@ -75,11 +87,27 @@ class _Writer:
             root = m.nodes[0]
         if root is None:
             return
-        children = {}
-        for n in m.nodes:
-            if n is None:
-                continue
-            children.setdefault(go_lower(n.parent), []).append(n)
+        if _declared_in_number_order(m.nodes, root):
+            for n in m.nodes:
+                self.write_node(n)
+            return
+        # where a name is used twice, each node's children are those the
+        # compiler gives it (resolve_geom_tree: the nearest node of the name
+        # declared before)
+        if _has_duplicate_names(m.nodes):
+            by_node = resolve_geom_tree(m.nodes)[1]
+
+            def kids_of(n):
+                return by_node.get(n, ())
+        else:
+            children = {}
+            for n in m.nodes:
+                if n is None:
+                    continue
+                children.setdefault(go_lower(n.parent), []).append(n)
+
+            def kids_of(n):
+                return children.get(go_lower(n.name), ())
         visited = set()
         # Iterative pre-order, children in declaration order (writeNodeRecursive)
         stack = [(root, 0)]
@@ -89,7 +117,7 @@ class _Writer:
                 continue
             visited.add(id(node))
             self.write_node(node)
-            kids = [c for c in children.get(go_lower(node.name), ())
+            kids = [c for c in kids_of(node)
                     if c is not node and equal_fold(c.parent, node.name)]
             for c in reversed(kids):
                 stack.append((c, depth + 1))
@@ -272,10 +300,6 @@ class _Writer:
             ind(4, "flarecolorshifts %d" % len(l.flare_color_shifts))
             for c in l.flare_color_shifts:
                 ind(6, fmt_vec3(c))
-        if l.shadow_radius != 0:
-            ind(4, "shadowradius %s" % fmt_float(l.shadow_radius))
-        if l.vertical_displacement != 0:
-            ind(4, "verticaldisplacement %s" % fmt_float(l.vertical_displacement))
 
     def write_emitter_data(self, n, e):
         ind = self.indent
@@ -354,12 +378,17 @@ class _Writer:
     def write_anim_node(self, m, an):
         ind = self.indent
         geom = m.find_node(an.name)
-        ind(4, "node %s %s" % (geom.node_type() if geom is not None else "dummy", an.name))
+        if geom is not None:
+            node_type = geom.node_type()
+        else:
+            node_type = an.type or "dummy"
+        ind(4, "node %s %s" % (node_type, an.name))
         ind(6, "parent %s" % an.parent)
         if an.mesh is not None:
             self.vec3_list(6, "verts", an.mesh.verts)
             self.write_faces(6, an.mesh.faces)
             self.vec3_list(6, "tverts", an.mesh.tverts)
+            self.vec3_list(6, "normals", an.mesh.normals)
         if an.anim_mesh is not None:
             am = an.anim_mesh
             if am.clip_u != 0 or am.clip_v != 0 or am.clip_w != 0 or am.clip_h != 0:
@@ -431,7 +460,7 @@ class _Writer:
         self.indent(level, "faces %d" % len(faces))
         pre = "  " * (level + 2)
         self.out.extend("%s%d %d %d %d %d %d %d %d\n" % (pre, f.verts[0], f.verts[1], f.verts[2],
-                                                          _uint64(f.smooth_group), f.uvs[0], f.uvs[1], f.uvs[2],
+                                                          f.smooth_group, f.uvs[0], f.uvs[1], f.uvs[2],
                                                           f.material) for f in faces)
 
     def vec3_lines(self, level, vecs):
@@ -451,3 +480,48 @@ _ZERO3 = (0.0, 0.0, 0.0)
 def _handle(key, i, zero):
     """A bezier key's handle; a linear key in a bezier controller has zero handles."""
     return key[i] if len(key) > i else zero
+
+
+def _declared_in_number_order(nodes, root):
+    """declaredInNumberOrder: the nodes as listed are a declaration order to
+    keep (part numbers 0..n-1 in list order, root first, each parent listed
+    before its child, no name used twice a parent)."""
+    if len(nodes) < 2 or nodes[0] is not root:
+        return False
+    seen = set()
+    dup = False
+    for i, n in enumerate(nodes):
+        if n is None or n.part_number != i:
+            return False
+        if i > 0 and go_lower(n.parent) not in seen:
+            return False
+        name = go_lower(n.name)
+        if name in seen:
+            dup = True
+        seen.add(name)
+    return not dup or not duplicate_is_parent(nodes)
+
+
+def _has_duplicate_names(nodes):
+    """hasDuplicateNames: two nodes share a name (case-folded)."""
+    seen = set()
+    for n in nodes:
+        if n is None:
+            continue
+        key = go_lower(n.name)
+        if key in seen:
+            return True
+        seen.add(key)
+    return False
+
+
+def duplicate_is_parent(nodes):
+    """duplicateIsParent: a name two nodes share is some node's parent."""
+    seen = set()
+    dup = set()
+    for n in nodes:
+        key = go_lower(n.name)
+        if key in seen:
+            dup.add(key)
+        seen.add(key)
+    return any(go_lower(n.parent) in dup for n in nodes)

@@ -2,8 +2,9 @@
 
 Face corners are merged into GPU vertices the way the game's
 InternalGenVertices merges them (position, UV0-3, normal, colour, mirrorlist
-value, and the bone influences / constraint of skin and dangly meshes, floats
-compared by value), degenerate faces are dropped, and the vertex streams go to
+value, the bone influences / constraint of skin and dangly meshes, and the
+tangent and handedness when the ASCII gives tangents, floats compared by
+value), degenerate faces are dropped, and the vertex streams go to
 the MDX block in the order real binaries use.
 """
 
@@ -14,7 +15,7 @@ from .compiler_normals import face_cross, generate_normals
 from .compiler_tangents import render_hint_value, resolve_tangents, use_existing_tangents, zero_length_tangents
 from .f32 import f32, f32_bits
 from .gomath import go_lower, go_quote
-from .materials import is_normal_mapped
+from .materials import mesh_normal_mapped
 
 _MAX_F32 = 3.4028234663852886e38
 _FACE = struct.Struct("<4fI6H")  # normal, plane distance, material, adjacency, corners
@@ -38,6 +39,7 @@ class ExpandedMesh:
         self.tex_stages = 0
         self.face_verts = []   # [a, b, c] GPU indices per kept face
         self.face_src = []     # face_verts[k] came from mesh.faces[face_src[k]]
+        self.record_verts = None  # face_verts before tangent clones, for the face records
         self.orig_vert = []    # GPU vertex -> source vertex index
         self.orig_tvert = []   # GPU vertex -> source UV0 index, -1 without one
         self.faces_ptr_pos = 0
@@ -124,6 +126,10 @@ def build_expanded_mesh(mesh, strip_degenerate=False, skin_keys=None, dangly=Non
     has_tex_idx0 = bool(mesh.tex_indices0)
     has_normals = bool(mesh.normals)
     has_colors = bool(mesh.colors)
+    # Tangents from the file are part of the merge key (MDL-MESH-010, probe
+    # zspec_tanmerge) when they cover every vertex and the mesh has normals.
+    tangents = mesh.tangents
+    has_tangents = has_normals and len(verts) > 0 and len(tangents) >= len(verts)
     corner_normals = mesh.corner_normals
     normals = mesh.normals
     colors = mesh.colors
@@ -148,7 +154,8 @@ def build_expanded_mesh(mesh, strip_degenerate=False, skin_keys=None, dangly=Non
     nan = (_has_nan(verts) or _has_nan(tverts) or _has_nan(tverts1) or _has_nan(tverts2)
            or _has_nan(tverts3) or _has_nan(normals) or _has_nan(colors)
            or any(_has_nan(c) for c in corner_normals)
-           or (constraints is not None and any(x != x for x in constraints)))
+           or (constraints is not None and any(x != x for x in constraints))
+           or (has_tangents and _has_nan(tangents)))
     kb = _bits if nan else (lambda v: v)
 
     positions, origv, origt = exp.positions, exp.orig_vert, exp.orig_tvert
@@ -230,6 +237,11 @@ def build_expanded_mesh(mesh, strip_degenerate=False, skin_keys=None, dangly=Non
                    skin_keys[vert_idx] if 0 <= vert_idx < nsk else "",
                    kb(constraints[vert_idx]) if 0 <= vert_idx < ncons else 0.0,
                    anim_merge_key(mesh, anim, vert_idx, tv_idx) if anim is not None else "")
+            if has_tangents and 0 <= vert_idx < len(tangents):
+                t = tangents[vert_idx]
+                key += (kb(t[0]), kb(t[1]), kb(t[2]), -1 if t[3] < 0 else 1)
+            else:
+                key += (0, 0, 0, 0)
             cs.append((key, vert_idx, tv_idx, pos, uv, uv1, uv2, uv3, nor, col))
 
         if aabb_merge:
@@ -383,7 +395,7 @@ class MeshMixin:
         self.last_expanded = exp
 
         tangents, handedness = resolve_tangents(
-            mesh, exp, is_normal_mapped(mesh, self.resource_dirs), n is not None and n.anim_mesh is not None)
+            mesh, exp, mesh_normal_mapped(mesh, self.resource_dirs, n.name if n is not None else None, self.warn), n is not None and n.anim_mesh is not None)
         if self.warn is not None and n is not None and use_existing_tangents(mesh, exp):
             z = zero_length_tangents(mesh)
             if z > 0:
@@ -527,7 +539,7 @@ class MeshMixin:
                     nx, ny, nz = f32(cx / length), f32(cy / length), f32(cz / length)
                 dist = -f32(f32(f32(nx * p1[0]) + f32(ny * p1[1])) + f32(nz * p1[2]))
             adj = adjacency[k]
-            fv = exp.face_verts[k]
+            fv = exp.face_verts[k] if exp.record_verts is None else exp.record_verts[k]
             out += pack(nx, ny, nz, dist, face.material & 0xFFFFFFFF, adj[0], adj[1], adj[2], fv[0], fv[1], fv[2])
         core.raw(out)
         if exp.index_count_list_ptr_pos >= 0 and exp.index_buf_off >= 0:

@@ -1,4 +1,4 @@
 Copied by scripts/vendor_cleanmodels.sh from github.com/plenarius/cleanmodels python/cleanmodels.
 Do not edit: change cleanmodels and run the script again.
-commit 95246767bf0582ed79d25524caa4698b974201cf
-describe v4.13.0
+commit 8f322508b8cc7b1344d0cb16ff643cbc7682541b
+describe v4.18.0-2-g8f32250

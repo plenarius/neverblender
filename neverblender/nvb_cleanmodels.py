@@ -209,13 +209,20 @@ def compile_to(path, ascii_path, out_path, game_dir=""):
 def compile_bundled(ascii_path, out_path, game_dir=""):
     """Compile ascii_path to a binary model at out_path with Neverblender's
     copy of cleanmodels' compiler (neverblender/cleanmodels): the same bytes
-    the cleanmodels program writes. Returns (error, warnings) as compile_to."""
+    the cleanmodels program writes. Returns (error, warnings) as compile_to.
+
+    Like `cleanmodels compile` (4.15 and later), a model with a walkmesh (an
+    aabb node) also gets <name>.wok beside out_path, replacing any existing
+    one; a model without one gets none."""
     from . import cleanmodels
     try:
         with open(os.fsencode(ascii_path), "rb") as f:
             res = cleanmodels.parse(f.read())
         res.model.file_type = "ascii"
         warnings = [str(e) for e in res.errors]
+        # The compiler fills in normals on the model it is given; the program
+        # writes the walkmesh from the model as it was parsed
+        wok = cleanmodels.write_walkmesh(res.model)
         # Supermodels, skeletons and materials: the model's folder, then the game
         dirs = cleanmodels.lookup_dirs(ascii_path, game_dir=game_dir)
         data = cleanmodels.compile(res.model, dirs, dirs, warnings.append)
@@ -223,7 +230,33 @@ def compile_bundled(ascii_path, out_path, game_dir=""):
         return str(e) or type(e).__name__, []
     with open(os.fsencode(out_path), "wb") as f:
         f.write(data)
+    if wok is not None:
+        error = _write_wok(wok.encode("latin-1"), out_path)
+        if error:
+            return error, warnings
     return "", warnings
+
+
+def _write_wok(data, model_path):
+    """Write a walkmesh beside the model just written to model_path, as
+    <name>.wok, through a temporary file (cmd/cleanmodels writeWok). Returns an
+    error message, or "" when it was written."""
+    base = os.path.basename(model_path)
+    dot = base.rfind(".")
+    stem = base[:dot] if dot >= 0 else base
+    wok_path = os.path.join(os.path.dirname(model_path), stem + ".wok")
+    tmp = wok_path + ".tmp"
+    try:
+        with open(os.fsencode(tmp), "wb") as f:
+            f.write(data)
+        os.replace(os.fsencode(tmp), os.fsencode(wok_path))
+    except OSError as e:
+        try:
+            os.remove(os.fsencode(tmp))
+        except OSError:
+            pass
+        return "writing %s: %s" % (wok_path, e)
+    return ""
 
 
 def _resource_args(game_dir="", resource_dirs=()):

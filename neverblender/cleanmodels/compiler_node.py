@@ -184,16 +184,17 @@ def _build_aabb_node(mesh, faces, out):
     idx = len(out)
     e = _AabbTreeEntry(bmin, bmax, -1)
     out.append(e)
+    # a leaf has no plane, an inner node the engine's (aabb_split_plane), as
+    # authored_aabb_tree sets them
     if len(faces) == 1:
         e.leaf_face = faces[0]
-        e.plane = 1 << _longest_axis(bmin, bmax)
         return idx
     axis = _longest_axis(bmin, bmax)
-    e.plane = 1 << axis
     mid = len(faces) // 2
     _sort_faces_by_axis(mesh, faces, axis)
     e.left = _build_aabb_node(mesh, faces[:mid], out)
     e.right = _build_aabb_node(mesh, faces[mid:], out)
+    e.plane = aabb_split_plane(out[e.left], out[e.right])
     return idx
 
 
@@ -339,7 +340,7 @@ class NodeMixin:
         core.fixed_str(em.render, 32)
         core.fixed_str(em.blend, 32)
         core.fixed_str(em.texture, 64)
-        core.fixed_str(em.chunk_name, 16)
+        core.fixed_resref(em.chunk_name, 16)
         core.u32(em.two_sided_tex)
         core.u32(em.loop)
         core.u16(em.render_order)

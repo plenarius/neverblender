@@ -34,9 +34,16 @@ class MeshData:
     def __init__(self):
         self.verts = []
         self.faces = []
+        # Each face's three stored neighbours (-1 none) and the face list's file
+        # offset, as read from a binary; empty for ASCII (Go: StoredAdjacency).
+        self.stored_adjacency = []
+        self.faces_offset = 0
         self.normals = []
         self.corner_normals = []  # per-face-corner normals, filled in by the compiler
         self.tangents = []
+        # Decompiled binary: its stored tangents were left out because a compile
+        # generates the same (Go: TangentsOmitted). Not written to the ASCII.
+        self.tangents_omitted = False
         self.colors = []
         self.tverts = []
         self.tverts1 = []
@@ -273,6 +280,9 @@ class AnimNode:
     def __init__(self, name="", parent=""):
         self.name = name
         self.parent = parent
+        # the node type for a node the geometry lacks (AnimNode.Type): the
+        # declared one ("" for dummy), or the one a binary node's flags give
+        self.type = ""
         # position keys: (time, value, tan_in, tan_out)
         self.position_keys = []
         self.position_bezier = False
@@ -330,7 +340,8 @@ class Model:
         self.animations = []
         self.warnings = []
         self.notes = []  # Model.Notes: dropped data that is known and harmless (info)
-        self.render_merges = []  # Model.RenderMerges: (receiver, donors, lost)
+        self.render_merges = []  # Model.RenderMerges: (receiver, donors, lost, folded)
+        self.after_done_model = None  # Model.AfterDoneModel: the lines after the first donemodel
 
     def find_node(self, name):
         for n in self.nodes:
@@ -343,6 +354,20 @@ class Model:
             if equal_fold(n.parent, "NULL"):
                 return n
         return None
+
+
+class AfterDoneModel:
+    """AfterDoneModel: an ASCII model's lines after its first donemodel. The game
+    reads on to the end, but outside a block runs only the top-level keywords:
+    an animation there is read, a node block or anything else is not."""
+
+    def __init__(self, line):
+        self.line = line
+        self.lines = 0
+        self.ignored = 0
+        self.read = 0
+        self.nodes = []
+        self.animations = []
 
 
 def classification_from_code(code):
