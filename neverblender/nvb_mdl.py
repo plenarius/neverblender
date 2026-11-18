@@ -381,15 +381,33 @@ class Mdl():
             if not blend_file:
                 blend_file = "unknown"
 
-        # Get Addon Version
-        try:
-            nvbVersion = [addon.bl_info.get('version', (-1,-1,-1)) for addon in addon_utils.modules() if addon.bl_info['name'] == 'Neverblender'][0]
-            nvbVersion = '.'.join([str(s) for s in nvbVersion])
-        except (KeyError, ValueError):
-            nvbVersion = "-1"
-
-        ascii_lines.append("# NeverBlender " + nvbVersion + "|Blender " + bpy.app.version_string + time_str)
+        ascii_lines.append("# NeverBlender " + Mdl.addon_version() + "|Blender " + bpy.app.version_string + time_str)
         ascii_lines.append("filedependancy " + blend_file)
+
+    @staticmethod
+    def addon_version():
+        """The add-on's version as text, e.g. '4.5.6'.
+
+        Taken from the add-on list; an add-on loaded from sys.path (not from
+        an add-ons folder) is not in it, so fall back to the package's own
+        bl_info, then to '-1'.
+        """
+        version = None
+        try:
+            version = [addon.bl_info.get('version', (-1, -1, -1)) for addon in addon_utils.modules()
+                       if addon.bl_info.get('name') == 'Neverblender'][0]
+        except (KeyError, ValueError, IndexError, AttributeError, TypeError):
+            version = None
+        if version is None:
+            try:
+                from . import bl_info
+                version = bl_info['version']
+            except (ImportError, KeyError, TypeError):
+                return "-1"
+        try:
+            return '.'.join([str(v) for v in version])
+        except TypeError:
+            return "-1"
 
     @staticmethod
     def generate_ascii(mdl_base, ascii_lines, options):

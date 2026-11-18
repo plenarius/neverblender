@@ -1,11 +1,77 @@
 """TODO: DOC."""
 
+import glob
 import os
+import struct
 
 from . import nvb_utils
 from . import nvb_def
 from . import nvb_parse
 from .nvb_materialnode import Materialnode
+
+
+# The renderhint a new material starts with (NVB_PG_material_mtr)
+DEFAULT_RENDERHINT = "NormalAndSpecMapped"
+
+# Resource types whose names a stock texture or material goes by
+_STOCK_TYPES = {3, 6, 2033, 2072}  # tga, plt, dds, mtr
+_stock_names = dict()  # game install -> set of lower-case resrefs
+
+
+def _key_names(path, names):
+    """Add the texture and material resrefs a KEY V1 file lists."""
+    with open(path, "rb") as f:
+        data = f.read()
+    if len(data) < 64 or data[0:8] != b"KEY V1  ":
+        return
+    key_count, key_off = struct.unpack_from("<I", data, 12)[0], struct.unpack_from("<I", data, 20)[0]
+    for i in range(key_count):
+        o = key_off + i * 22
+        if o + 22 > len(data):
+            break
+        if struct.unpack_from("<H", data, o + 16)[0] in _STOCK_TYPES:
+            names.add(data[o:o + 16].rstrip(b"\0").decode("latin-1").lower())
+
+
+def _erf_names(path, names):
+    """Add the texture and material resrefs an ERF (texture pack) holds."""
+    with open(path, "rb") as f:
+        hdr = f.read(160)
+        if len(hdr) < 160 or hdr[0:4] not in (b"ERF ", b"HAK ", b"MOD "):
+            return
+        count = struct.unpack_from("<I", hdr, 16)[0]
+        key_off = struct.unpack_from("<I", hdr, 24)[0]
+        f.seek(key_off)
+        keys = f.read(count * 24)
+    for i in range(len(keys) // 24):
+        k = keys[i * 24:i * 24 + 24]
+        if struct.unpack_from("<H", k, 20)[0] in _STOCK_TYPES:
+            names.add(k[:16].rstrip(b"\0").decode("latin-1").lower())
+
+
+def stock_texture_names(game_dir=""):
+    """Names of the game's own textures and materials, or None without a
+    game install (the Game folder preference, $NWN_ROOT or the usual
+    install locations)."""
+    try:
+        from .cleanmodels import find_game_install
+        root = find_game_install(game_dir)
+    except Exception:
+        return None
+    if not root or not os.path.isdir(os.path.join(root, "data")):
+        return None
+    if root not in _stock_names:
+        names = set()
+        data_dir = os.path.join(root, "data")
+        try:
+            for kf in sorted(glob.glob(os.path.join(glob.escape(data_dir), "*.key"))):
+                _key_names(kf, names)
+            for erf in sorted(glob.glob(os.path.join(glob.escape(data_dir), "*", "*.erf"))):
+                _erf_names(erf, names)
+        except (OSError, struct.error):
+            pass
+        _stock_names[root] = names if names else None
+    return _stock_names[root]
 
 
 class Mtr(object):
@@ -131,6 +197,59 @@ class Mtr(object):
                     else:
                         param_type = 'float'
                     self.parameters[param_name] = (param_type, param_values)
+
+    @staticmethod
+    def is_imported(blen_material):
+        """True if the material came from a model that named an MTR (or a
+        materialname): its MTR is written back as it was read."""
+        mtr_props = blen_material.nvb.mtr
+        return bool(mtr_props.mdl_bitmap or mtr_props.mdl_materialname)
+
+    @staticmethod
+    def is_needed(blen_material, tex_list):
+        """True if the material holds anything an MDL cannot: an MTR is then
+        written. A material with only a diffuse texture (and the default
+        renderhint, no parameters and no shaders) is written into the MDL.
+
+        tex_list: the material's textures, null for an empty slot.
+        """
+        mtr_props = blen_material.nvb.mtr
+        if Mtr.is_imported(blen_material):
+            return True
+        if any(t and t != nvb_def.null for t in tex_list[1:]):
+            return True  # normal, specular, roughness, height, illumination, ...
+        if mtr_props.shader_vs or mtr_props.shader_fs or mtr_props.shader_gs:
+            return True
+        if len(mtr_props.param_list) > 0:
+            return True
+        hint = mtr_props.renderhint.strip()
+        return bool(hint) and hint != DEFAULT_RENDERHINT
+
+    @staticmethod
+    def stock_name_warning(mtr_name, blen_material, tex_list, options):
+        """The export log's warning for an MTR named like a stock texture or
+        material, or ''. An MTR overrides every model that uses the texture
+        of that name once it is in a hak or the override folder."""
+        if Mtr.is_imported(blen_material):
+            return ''  # Written back as it was read
+        stock = stock_texture_names(getattr(options, 'cleanmodels_game_dir', ''))
+        name = mtr_name.lower()
+        if stock is not None:
+            if name not in stock:
+                return ''
+            return ("{}.mtr (material {}): {} is the name of a stock NWN texture or material. "
+                    "In a hak or the override folder this MTR replaces the material of every "
+                    "model that uses {}, stock models included. Rename the material.").format(
+                        mtr_name, blen_material.name, mtr_name, mtr_name)
+        diffuse = tex_list[0].lower() if tex_list and tex_list[0] else ''
+        if name != diffuse:
+            return ''
+        return ("{}.mtr (material {}) has the name of its diffuse texture. If {} is a stock "
+                "NWN texture, this MTR replaces the material of every model that uses it "
+                "(stock models included) once it is in a hak or the override folder; "
+                "rename the material unless that is intended. (No game install found to "
+                "check against: set the Game folder in the add-on preferences.)").format(
+                    mtr_name, blen_material.name, tex_list[0])
 
     @staticmethod
     def generate_ascii(blen_material, options):

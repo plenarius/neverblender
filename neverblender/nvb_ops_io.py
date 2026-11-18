@@ -16,16 +16,25 @@ from . import nvb_cleanmodels
 
 
 
-def report_import_warnings(operator, options, shown=10):
-    """Show what the import found wrong (decompile warnings, models that
-    could not be read) in Blender's status bar and Info editor."""
+def report_import_warnings(operator, options, shown=10, what="Import"):
+    """Show what the import (or export) found wrong (decompile warnings,
+    models that could not be read, ...) in Blender's status bar and Info
+    editor."""
     if not options.warnings:
         return
     for text in options.warnings[:shown]:
         operator.report({'WARNING'}, text)
     more = len(options.warnings) - shown
-    operator.report({'WARNING'}, "Import: {} warning(s){}, see the Info editor or the system console".format(
-        len(options.warnings), " ({} more in the console)".format(more) if more > 0 else ""))
+    operator.report({'WARNING'}, "{}: {} warning(s){}, see the Info editor or the system console".format(
+        what, len(options.warnings), " ({} more in the console)".format(more) if more > 0 else ""))
+
+
+def report_export_warnings(operator, options, shown=10):
+    """report_import_warnings for an export; all of them also go to the
+    system console."""
+    for text in options.warnings:
+        print("Neverblender: " + text)
+    report_import_warnings(operator, options, shown, "Export")
 
 class NVB_OT_mdlexport(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
     """Export Aurora Engine model (.mdl)"""
@@ -310,6 +319,7 @@ class NVB_OT_mdlexport(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
             options.cleanmodels_path = cm_path
             options.cleanmodels_check = self.cleanmodels_check
         result = self.mdl_export(context, options)
+        report_export_warnings(self, options)
         if options.cleanmodels_path or options.cleanmodels_compile:
             n = nvb_utils.store_cleanmodels_findings(context.scene, options.cleanmodels_findings)
             worst = {f["severity"] for f in options.cleanmodels_findings}
@@ -1157,6 +1167,7 @@ class NVB_OT_phenotype_batch_export(bpy.types.Operator, bpy_extras.io_utils.Expo
 
         export_type = 'cloak phenotype' if self.is_cloak else 'phenotype'
         self.report({'INFO'}, f'Exported {exported_count} {export_type} model(s)')
+        report_export_warnings(self, options)
         return {'FINISHED'}
 
     def invoke(self, context, event):

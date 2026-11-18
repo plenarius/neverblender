@@ -329,6 +329,8 @@ class ExportOptions():
         self.cleanmodels_check = False
         self.cleanmodels_compile = False
         self.cleanmodels_findings = []
+        # What the export log shows (status bar, Info editor and console)
+        self.warnings = []
         """TODO: DOC."""
         self.filepath = ""
         self.mdlname = "unnamed"

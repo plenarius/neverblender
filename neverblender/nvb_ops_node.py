@@ -480,6 +480,7 @@ class NVB_OT_util_nodes_pwk(bpy.types.Operator):
         mesh = NVB_OT_util_nodes_pwk.build_pwk_mesh(pwk_data, mesh_name)
         if mesh:
             pwk_obj = bpy.data.objects.new(mesh_name, mesh)
+            pwk_obj.nvb.shadow = False  # Walkmeshes cast no shadow
             pwk_obj.parent = pwk_base
             for collection in pwk_base.users_collection:
                 collection.objects.link(pwk_obj)
@@ -889,6 +890,7 @@ class NVB_OT_util_nodes_tile(bpy.types.Operator):
             nvb_utils.create_wok_materials(mesh)
             wok_obj = bpy.data.objects.new(wok_name, mesh)
             wok_obj.nvb.meshtype = nvb_def.Meshtype.AABB
+            wok_obj.nvb.shadow = False  # As the game has it for AABB nodes
             wok_obj.location = (0.0, 0.0, 0.0)
             wok_obj.parent = mdl_base
             for collection in mdl_base.users_collection:

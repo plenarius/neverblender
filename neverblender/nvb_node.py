@@ -633,12 +633,11 @@ class Trimesh(Node):
             del bm
 
         def mesh_get_smoothgroups(blen_mesh, obj, options):
-            """Get the smoothing group for each face."""
+            """Get the smoothing group for each face (Smoothing: Groups)."""
 
             group_ids = []
             if (obj.nvb.smoothgroup == 'SEPR') or \
-               (obj.nvb.meshtype == nvb_def.Meshtype.AABB) or \
-               (not options.geom_smoothing_group):
+               (obj.nvb.meshtype == nvb_def.Meshtype.AABB):
                 # All faces belong to group 0 (every edge is sharp)
                 group_ids = [0] * len(blen_mesh.polygons)
             elif (obj.nvb.smoothgroup == 'SING') or \
@@ -653,13 +652,25 @@ class Trimesh(Node):
                 stored = nvb_utils.mesh_stored_smoothgroups(blen_mesh)
                 if stored is not None:
                     return stored
-                # Calculate smoothing groups from sharp edges or auto angle setting
-                # NWN seems to use bitflag groups (smoothing groups of standard model all have powers of 2)
+                # Calculate smoothing groups from sharp edges or auto angle
+                # setting. The game smooths a face corner with an earlier
+                # face at the same vertex whenever their groups share a bit,
+                # so regions must not share a bit even where they only touch
+                # at a vertex (distinct and the default bitflag groups both
+                # ensure that).
+                graph = None
                 if options.geom_smoothing_group_distinct:
-                    g = nvb_utils.AuroraSmoothgroupGraph()
-                    group_ids = g.calc_smooth_groups(blen_mesh)
+                    graph = nvb_utils.AuroraSmoothgroupGraph()
+                    group_ids = graph.calc_smooth_groups(blen_mesh)
+                elif options.geom_smoothing_group_binary:
+                    group_ids, graph = nvb_utils.mesh_calc_bitflag_smoothgroups(blen_mesh)
                 else:
-                    group_ids, _ = blen_mesh.calc_smooth_groups(use_bitflags=options.geom_smoothing_group_binary)
+                    group_ids, _ = blen_mesh.calc_smooth_groups(use_bitflags=False)
+                    group_ids = list(group_ids)
+                if graph is not None:
+                    message = graph.overflow_message(obj.name)
+                    if message:
+                        options.warnings.append(message)
             return group_ids
 
         def mesh_get_normals(mesh, uvl_name):
@@ -830,14 +841,18 @@ class Trimesh(Node):
         # Generate Smoothgroups
         if options.geom_smoothing_group:
             me_face_grp = mesh_get_smoothgroups(me, obj_to_export, options)
-        else:
+        elif options.geom_smoothing_split:
+            # Split: the vertices are split along the sharp edges already, so
+            # smoothing everything that still shares a vertex is right
             me_face_grp = [1] * len(me.polygons)
+        else:
+            # None: every edge sharp (group 0 shares no bit with any face)
+            me_face_grp = [0] * len(me.polygons)
 
         if me_face_grp:
             dig_g = max(1, len(str(max(me_face_grp))))  # req digits for format
         else:
-            dig_g = 1
-            print('Neverblender: ERROR - Could not create smoothgroups for ' + obj.name)
+            dig_g = 1  # A mesh without faces
 
         # Face vertex indices
         me_face_vert = [tuple(p.vertices) for p in me.polygons]
@@ -1635,6 +1650,9 @@ class Aabb(Trimesh):
         """TODO: Doc."""
         Trimesh.__init__(self, name)
         self.meshtype = nvb_def.Meshtype.AABB
+        # The game's default for an AABB node without a shadow line
+        # (nwn-mdl-spec MDL-MESH-060); never exported for walkmeshes
+        self.shadow = False
 
     @staticmethod
     def generateAsciiAABB(obj, ascii_lines, options):

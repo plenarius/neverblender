@@ -19,6 +19,11 @@ a pull request. Release tags (`v*`) cannot be moved or deleted once pushed.
    `neverblender/cleanmodels/VENDORED` points at something anyone can check.
 2. Run the release check on Blender 3.3, 3.6, 4.0, 4.5 and 5.2 (every model
    round-trips, exports match across versions, the tools work). It must pass.
+   With it, on each version: `scripts/tests/run_tests.sh BLENDER` (export
+   tests: smoothing groups, MTR files, shadow) and
+   `scripts/tests/run_roundtrip.sh BLENDER OLD_ADDON_DIR OUT_DIR models...`
+   (imported models export the same as with the last release; get its
+   add-on with `git archive vX.Y.Z neverblender | tar -x -C OLD`).
 3. Tag the merged commit and push the tag:
    `git fetch origin && git tag -a vX.Y.Z -m vX.Y.Z origin/main && git push origin vX.Y.Z`.
    The release workflow checks the tag against `bl_info`, builds
