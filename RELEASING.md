@@ -23,7 +23,9 @@ a pull request. Release tags (`v*`) cannot be moved or deleted once pushed.
    tests: smoothing groups, MTR files, shadow) and
    `scripts/tests/run_roundtrip.sh BLENDER OLD_ADDON_DIR OUT_DIR models...`
    (imported models export the same as with the last release; get its
-   add-on with `git archive vX.Y.Z neverblender | tar -x -C OLD`).
+   add-on with `git archive vX.Y.Z neverblender | tar -x -C OLD`), and once
+   `scripts/tests/run_crossversion.sh OUT_DIR "BLENDER_3.3 ... BLENDER_5.2"`
+   (meshes made in Blender export byte-identical in every version).
 3. Tag the merged commit and push the tag:
    `git fetch origin && git tag -a vX.Y.Z -m vX.Y.Z origin/main && git push origin vX.Y.Z`.
    The release workflow checks the tag against `bl_info`, builds
