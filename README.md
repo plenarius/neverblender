@@ -54,6 +54,23 @@ Everything in Neverblender 4.0 (the last Neverwinter Vault release), plus:
   sharp edges on export, which changed how unedited models shade in game.
   Imported smoothing groups now go back out as they came in; faces made by
   extruding or subdividing take the group of the face they came from.
+- **Hard edges stay hard in game.** Smoothing groups made from sharp edges
+  (*Smoothing: Groups*, the default) no longer share a group where two
+  hard-edged regions meet at a single vertex: the game smooths faces whose
+  groups share a bit at any shared vertex, so such corners came out bent.
+  *Distinct Smoothing groups* (add-on preferences) works on meshes of any
+  size and says in the export log when a mesh needs more than the 31 groups
+  there are. *Smoothing: None* exports every face in group 0 (flat), as it
+  says, instead of smoothing everything.
+- **An MTR file only when the material needs one.** *Use MTR* stays on, but
+  a material with just a diffuse texture is written into the MDL
+  (`bitmap <texture>`); one with more textures (normal, specular, ...),
+  parameters, shaders or another renderhint gets its MTR. Imported models
+  write their MTR back as before. The export log warns when an MTR would be
+  named like a stock texture (checked against the game install if one is
+  found), since such an MTR in a hak would change every stock model using it.
+- **New meshes cast shadows** (`shadow 1`), as the game does for a mesh
+  without a `shadow` line. Imported models keep what their file says.
 - **Positions with 7 decimals** instead of 5: thin, two-sided meshes no
   longer shade differently after a round trip.
 - **Binary models import directly**, with cleanmodels' decompiler built in:
