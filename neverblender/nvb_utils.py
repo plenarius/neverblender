@@ -405,20 +405,12 @@ def smoothgroups_conflict(region_ids, face_verts, groups):
 def mesh_calc_bitflag_smoothgroups(blen_mesh):
     """Bitflag smoothing groups that stay apart across vertices too.
 
-    Blender 4.1 and later compute them (use_boundary_vertices_for_bitflags);
-    the result is checked, and AuroraSmoothgroupGraph used if it falls short
-    (more regions than bits) or in older Blender versions.
-    Returns (groups, graph): graph is the AuroraSmoothgroupGraph used, or None.
+    Always AuroraSmoothgroupGraph, not Blender's own
+    calc_smooth_groups(use_boundary_vertices_for_bitflags=True) (4.1 and
+    later): Blender 3.3 to 4.0 lack it and it numbers groups differently, so
+    exports would differ between Blender versions.
+    Returns (groups, graph): graph is the AuroraSmoothgroupGraph used.
     """
-    params = bpy.types.Mesh.bl_rna.functions['calc_smooth_groups'].parameters
-    if 'use_boundary_vertices_for_bitflags' in params:
-        groups, _ = blen_mesh.calc_smooth_groups(use_bitflags=True,
-                                                 use_boundary_vertices_for_bitflags=True)
-        groups = list(groups)
-        region_ids, _ = blen_mesh.calc_smooth_groups(use_bitflags=False)
-        face_verts = [p.vertices[:] for p in blen_mesh.polygons]
-        if not smoothgroups_conflict(list(region_ids), face_verts, groups):
-            return groups, None
     graph = AuroraSmoothgroupGraph()
     return graph.calc_smooth_groups(blen_mesh), graph
 
