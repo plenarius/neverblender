@@ -1,7 +1,8 @@
 #!/bin/bash
 # Export meshes made in Blender in several Blender versions and check the
 # MDLs are byte-identical (all but the header comment, which names the
-# Blender version and the date).
+# Blender version and the date). The meshes are crossversion.py's own and
+# those in fixtures/; extra mesh.json files can be given.
 #   scripts/tests/run_crossversion.sh OUT_DIR "BLENDER1 BLENDER2 ..." [mesh.json]...
 set -eu
 HERE=$(cd "$(dirname "$0")" && pwd)

@@ -5,12 +5,15 @@
 Each mesh is exported with Smoothing: Groups, with and without Distinct
 Smoothing groups. The built-in meshes are: two smooth regions touching only
 at a vertex, a grid of 1,500 quads that are each a region of their own, and
-33 regions around one vertex (more than the 31 groups). A mesh.json holds
-{name, verts, faces, smooth (per face), sharp (edges as vertex pairs)}, e.g.
-a model you may not commit. run_crossversion.sh runs this in each version
-and compares the outputs.
+33 regions around one vertex (more than the 31 groups). Every mesh in
+fixtures/*.json is exported too (the contracted tower and, flat-shaded, the
+darg), and any mesh.json given on the command line. A mesh.json holds
+{name, verts, faces, smooth (per face, 0 or 1), sharp (edges as vertex
+pairs)}. run_crossversion.sh runs this in each version and compares the
+outputs.
 """
 
+import glob
 import json
 import math
 import os
@@ -72,7 +75,8 @@ def build(d):
 
 
 meshes = builtin_meshes()
-for path in argv[1:]:
+fixtures = sorted(glob.glob(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'fixtures', '*.json')))
+for path in fixtures + argv[1:]:
     with open(path) as f:
         meshes.append(json.load(f))
 for d in meshes:
