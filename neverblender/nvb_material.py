@@ -206,8 +206,10 @@ class Material(object):
             tex_list = [t if t else nvb_def.null for t in tex_list]
             while tex_list and tex_list[-1] == nvb_def.null:
                 _ = tex_list.pop()
-            # Write textures
-            if blen_material.nvb.mtr.use:
+            # Write textures. An MTR is written only when the material holds
+            # something the MDL cannot (Mtr.is_needed): a diffuse texture
+            # alone goes into the MDL.
+            if blen_material.nvb.mtr.use and nvb_mtr.Mtr.is_needed(blen_material, tex_list):
                 # MTRs are exported in a second pass
                 mtr_name = nvb_mtr.Mtr.get_mtr_name(blen_material)
                 mdl_bitmap = blen_material.nvb.mtr.mdl_bitmap
@@ -224,7 +226,14 @@ class Material(object):
                     ascii_lines.append('  ' + options.mat_mtr_ref + ' ' + mtr_name)
                 # AddOn options specify whether to actually write material data to mtr file
                 if options.mat_mtr_generate:
+                    if (mtr_name, blen_material.name) not in options.mtr_list:
+                        message = nvb_mtr.Mtr.stock_name_warning(mtr_name, blen_material, tex_list, options)
+                        if message:
+                            options.warnings.append(message)
                     options.mtr_list.add((mtr_name, blen_material.name))
+            elif not tex_list and blen_material.nvb.mtr.use:
+                # No texture at all (written as the MTR's name before)
+                ascii_lines.append(fstr_tex0.format(nvb_def.null))
             else:
                 # Write to MDL: Can only export the first three textures
                 # Also fix texture name to ascii

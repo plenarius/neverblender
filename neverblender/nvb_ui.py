@@ -11,6 +11,8 @@ from . import nvb_ops_variants
 
 from . import nvb_def
 from . import nvb_utils
+from . import nvb_mtr
+from .nvb_materialnode import Materialnode
 
 
 class NVB_UL_lensflares(bpy.types.UIList):
@@ -363,6 +365,15 @@ class NVB_PT_mtr(bpy.types.Panel):
         mat = context.material
 
         layout.enabled = mat.nvb.mtr.use
+
+        if mat.nvb.mtr.use:
+            # Say when the export writes no MTR (Mtr.is_needed)
+            try:
+                tex_list = [t if t else nvb_def.null for t in Materialnode.get_texture_list(mat)]
+                if not nvb_mtr.Mtr.is_needed(mat, tex_list):
+                    layout.label(text="Diffuse texture only: written into the MDL, no MTR", icon='INFO')
+            except Exception:
+                pass
 
         layout.separator()
         box = layout.box()

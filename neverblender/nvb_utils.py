@@ -273,61 +273,154 @@ class NodeResolver():
 
 
 class AuroraSmoothgroupGraph():
-    """Generates smoothgroups from sharp edges by using graph colouring
+    """Smoothing groups that share no bit across a hard edge or a vertex.
 
-    The generated smoothgoups do NOT share vertices. If that not a requirement
-    (= them not sharing an sharp edge is enough) using calc_smooth_groups(use_bitflags=True)
-    is sufficient
+    The game gives a face corner the normal of an earlier face at the same
+    vertex whenever their groups share a bit (nwn-mdl-spec MDL-MESH-031), so
+    two smooth regions that only touch at a vertex must not share a bit
+    either. calc_smooth_groups(use_bitflags=True) only keeps edge-adjacent
+    regions apart; this colours the regions so that regions sharing a vertex
+    get different bits.
+
+    A region of a single face (a flat-shaded face, or one with only sharp
+    edges) gets group 0: it then shades with its own normal, which is what
+    it should look like, and needs no bit. The other regions are coloured
+    greedily (DSatur), without recursion. When a region touches regions of
+    every one of the max_colours bits, it takes the bit its neighbours use
+    least (counted in shared vertices): the game then smooths across the hard
+    edge at those vertices. Such regions are counted in overflow_regions and
+    overflow_verts so the export can say so.
     """
-    max_colours = 31  # NWN may only use 32 groups max
+    max_colours = 31  # Bits 0 to 30: the group is written as a signed int
 
     def __init__(self):
-        pass
-
-
-    def is_colour_valid(self, v, colour, c):
-        """Check if a color assignment is valid."""
-        for i in range(self.V):
-            if self.graph[v][i] == 1 and colour[i] == c:
-                return False
-        return True
-
-
-    def create_colourization(self, colour, v):
-        """Find a valid colourization of the graph."""
-        if v == self.V:
-            return True
-
-        for c in range(1, self.max_colours + 1):
-            if self.is_colour_valid(v, colour, c) == True:
-                colour[v] = c
-                if self.create_colourization(colour, v + 1) == True:
-                    return True
-                colour[v] = 0
-
+        self.region_count = 0
+        self.overflow_regions = 0
+        self.overflow_verts = 0
 
     def calc_smooth_groups(self, blen_mesh):
-        """Get a valid number of """
-        group_ids, group_cnt = blen_mesh.calc_smooth_groups(use_bitflags=False)
-        group_polys = [[fid for fid, g in enumerate(group_ids) if g==gid] for gid in range(1,group_cnt+1)]
-        group_verts = [set([v for vl in [p.vertices[:] for pid, p in enumerate(blen_mesh.polygons) if pid in pid_list] for v in vl]) for pid_list in group_polys]
+        """Smoothing group per face of blen_mesh (bitflags, 0 for single faces)."""
+        region_ids, _ = blen_mesh.calc_smooth_groups(use_bitflags=False)
+        face_verts = [p.vertices[:] for p in blen_mesh.polygons]
+        return self.colour_regions(list(region_ids), face_verts)
 
-        self.graph = [[not g1.isdisjoint(g2) for g1 in group_verts] for g2 in group_verts]
-        self.V = group_cnt
+    def colour_regions(self, region_ids, face_verts):
+        """Smoothing group per face, from each face's region and vertices."""
+        import heapq
 
-        # Get a graph colorization
-        colour_list = [0] * self.V
-        if self.create_colourization(colour_list, 0) == None:
-            return []
+        # Regions as 0..n-1, in order of first appearance
+        index = {}
+        face_region = [index.setdefault(r, len(index)) for r in region_ids]
+        n = len(index)
+        self.region_count = n
+        self.overflow_regions = 0
+        self.overflow_verts = 0
+        region_faces = [0] * n
+        for r in face_region:
+            region_faces[r] += 1
+        region_verts = [set() for _ in range(n)]
+        for r, verts in zip(face_region, face_verts):
+            if region_faces[r] > 1:
+                region_verts[r].update(verts)
+        # Regions sharing a vertex are neighbours
+        vert_regions = dict()
+        for r, verts in enumerate(region_verts):
+            for v in verts:
+                vert_regions.setdefault(v, []).append(r)
+        neighbours = [set() for _ in range(n)]
+        for regions in vert_regions.values():
+            if len(regions) > 1:
+                for r in regions:
+                    neighbours[r].update(regions)
+        for r in range(n):
+            neighbours[r].discard(r)
 
-        # Map colourization to faces
-        #colour_list = [2**c for c in colour_list]
-        smoothgroups = list([(face_idx, 2**(colour-1)) for face_idx in goup_face] for goup_face, colour in zip(group_polys, colour_list))
-        smoothgroups = [item for sublist in smoothgroups for item in sublist]
-        smoothgroups.sort(key=lambda x: x[0])
-        smoothgroups = [sgi for (fi, sgi) in smoothgroups]
+        # DSatur: colour the region with the most differently coloured
+        # neighbours next (ties: most neighbours, then lowest index)
+        colour = [-1] * n
+        saturation = [set() for _ in range(n)]
+        heap = [(0, -len(neighbours[r]), r) for r in range(n) if region_faces[r] > 1]
+        heapq.heapify(heap)
+        while heap:
+            sat, _, r = heapq.heappop(heap)
+            if colour[r] >= 0 or -sat != len(saturation[r]):
+                continue  # Coloured already, or a stale entry
+            used = saturation[r]
+            free = [c for c in range(self.max_colours) if c not in used]
+            if free:
+                c = free[0]
+            else:
+                # Every bit is taken around this region: share the bit with
+                # the fewest shared vertices
+                cost = [0] * self.max_colours
+                for nb in neighbours[r]:
+                    if colour[nb] >= 0:
+                        cost[colour[nb]] += len(region_verts[r] & region_verts[nb])
+                c = min(range(self.max_colours), key=lambda k: (cost[k], k))
+                self.overflow_regions += 1
+                self.overflow_verts += cost[c]
+            colour[r] = c
+            for nb in neighbours[r]:
+                if colour[nb] < 0 and c not in saturation[nb]:
+                    saturation[nb].add(c)
+                    heapq.heappush(heap, (-len(saturation[nb]), -len(neighbours[nb]), nb))
+        return [(1 << colour[r]) if colour[r] >= 0 else 0 for r in face_region]
 
-        return smoothgroups
+    def overflow_message(self, name):
+        """What the export log says when the bits did not suffice, or ''."""
+        if not self.overflow_regions:
+            return ''
+        return ("{}: {} smoothing regions need more than {} smoothing groups to stay apart; "
+                "{} of them share a group with a neighbouring region, so the game smooths "
+                "across the hard edge at {} vertices. Split the mesh into several objects, "
+                "or use Smoothing: Split.").format(
+                    name, self.region_count, self.max_colours,
+                    self.overflow_regions, self.overflow_verts)
+
+
+def smoothgroups_conflict(region_ids, face_verts, groups):
+    """True if two regions that share a vertex share a group bit, or a region
+    of several faces has group 0 (the game would then shade them wrongly)."""
+    region_bits = dict()
+    region_faces = collections.Counter(region_ids)
+    for r, g in zip(region_ids, groups):
+        if region_bits.setdefault(r, g) != g:
+            return True
+        if g == 0 and region_faces[r] > 1:
+            return True
+    vert_regions = dict()
+    for r, verts in zip(region_ids, face_verts):
+        for v in verts:
+            vert_regions.setdefault(v, set()).add(r)
+    for regions in vert_regions.values():
+        if len(regions) > 1:
+            seen = 0
+            for r in regions:
+                if region_bits[r] & seen:
+                    return True
+                seen |= region_bits[r]
+    return False
+
+
+def mesh_calc_bitflag_smoothgroups(blen_mesh):
+    """Bitflag smoothing groups that stay apart across vertices too.
+
+    Blender 4.1 and later compute them (use_boundary_vertices_for_bitflags);
+    the result is checked, and AuroraSmoothgroupGraph used if it falls short
+    (more regions than bits) or in older Blender versions.
+    Returns (groups, graph): graph is the AuroraSmoothgroupGraph used, or None.
+    """
+    params = bpy.types.Mesh.bl_rna.functions['calc_smooth_groups'].parameters
+    if 'use_boundary_vertices_for_bitflags' in params:
+        groups, _ = blen_mesh.calc_smooth_groups(use_bitflags=True,
+                                                 use_boundary_vertices_for_bitflags=True)
+        groups = list(groups)
+        region_ids, _ = blen_mesh.calc_smooth_groups(use_bitflags=False)
+        face_verts = [p.vertices[:] for p in blen_mesh.polygons]
+        if not smoothgroups_conflict(list(region_ids), face_verts, groups):
+            return groups, None
+    graph = AuroraSmoothgroupGraph()
+    return graph.calc_smooth_groups(blen_mesh), graph
 
 
 def is_mdl_base(obj):

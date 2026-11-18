@@ -537,7 +537,10 @@ class NVB_PG_material_mtr(bpy.types.PropertyGroup):
     """
     # MTR Panel
     use: bpy.props.BoolProperty(name="Use MTR",
-                                description="Write date to MTR file",
+                                description="Write the material to an MTR file when it needs one: more "
+                                            "than a diffuse texture, parameters, shaders or a renderhint "
+                                            "other than NormalAndSpecMapped. A diffuse texture alone is "
+                                            "written into the MDL",
                                 default=True, options=set())
     renderhint: bpy.props.StringProperty(name="Renderhint",
                                         description="Specify Vertex shader",
@@ -1235,9 +1238,12 @@ class NVB_PG_object(bpy.types.PropertyGroup):
                         'Auto', 'Keep the groups the model was imported with; otherwise generate groups from sharp edges', 2)
                        ],
                 default='AUTO', options=set())
+    # On by default, as the game has it for a mesh without a shadow line
+    # (nwn-mdl-spec MDL-MESH-060). Import sets it from the model; walkmeshes
+    # and AABB nodes never write it.
     shadow: bpy.props.BoolProperty(name='Shadow',
                                    description='Whether to cast shadows',
-                                   default=False, options=set())
+                                   default=True, options=set())
     render: bpy.props.BoolProperty(name='Render',
                                    description='Render object',
                                    default=True, options=set())
