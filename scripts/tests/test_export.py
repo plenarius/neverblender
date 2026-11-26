@@ -1,4 +1,4 @@
-"""Export tests: smoothing groups, MTR files, shadow, run inside Blender.
+"""Export tests: smoothing groups, MTR files, shadow, tile walkmesh, run inside Blender.
 
 Run with scripts/tests/run_tests.sh (it enables the add-on from a scratch
 user scripts folder):
@@ -71,7 +71,7 @@ def make_mesh(base, name, verts, faces, smooth=True, sharp=()):
     return obj
 
 
-def export(base, name, mode='GROUP', distinct=False):
+def export(base, name, mode='GROUP', distinct=False, walkmesh=False, compile_binary=False):
     """Export base; return (path, console output)."""
     PREFS.export_smoothgroups_distinct_verts = distinct
     for o in bpy.context.scene.objects:
@@ -81,8 +81,8 @@ def export(base, name, mode='GROUP', distinct=False):
     path = os.path.join(OUT, name + '.mdl')
     out = io.StringIO()
     with contextlib.redirect_stdout(out):
-        bpy.ops.scene.nvb_mdlexport(filepath=path, export_walkmesh=False, export_animations=False,
-                                    cleanmodels_check=False, cleanmodels_compile=False,
+        bpy.ops.scene.nvb_mdlexport(filepath=path, export_walkmesh=walkmesh, export_animations=False,
+                                    cleanmodels_check=False, cleanmodels_compile=compile_binary,
                                     export_smoothing_mode=mode)
     text = out.getvalue()
     sys.stdout.write(text)
@@ -372,9 +372,9 @@ endnode
 '''
 
 
-def write_model(model, nodes):
-    text = 'newmodel {m}\nsetsupermodel {m} NULL\nclassification character\nsetanimationscale 1\n' \
-           'beginmodelgeom {m}\nnode dummy {m}\n  parent NULL\nendnode\n'.format(m=model)
+def write_model(model, nodes, classification='character'):
+    text = 'newmodel {m}\nsetsupermodel {m} NULL\nclassification {c}\nsetanimationscale 1\n' \
+           'beginmodelgeom {m}\nnode dummy {m}\n  parent NULL\nendnode\n'.format(m=model, c=classification)
     text += ''.join(nodes)
     text += 'endmodelgeom {m}\ndonemodel {m}\n'.format(m=model)
     path = os.path.join(FIX, model + '.mdl')
@@ -455,6 +455,48 @@ def section_10():
             shadows.append((node, t[1]))
     R.check(dict(shadows) == {'s_none': '1', 's_off': '0', 's_on': '1'},
             'fix6 imported shadow values export unchanged (aabb writes none)', str(shadows))
+
+
+def wok_positions(path):
+    """The position lines of the aabb nodes in a .wok."""
+    found, node = [], None
+    for ln in mdl_lines(path):
+        t = ln.split()
+        if t[:1] == ['node']:
+            node = t[1]
+        elif t[:1] == ['endnode']:
+            node = None
+        elif node == 'aabb' and t[:1] == ['position']:
+            found.append(' '.join(t[1:]))
+    return found
+
+
+@section('Tile walkmesh: the .wok has position 0 0 0 (the server centres a tile only with it)')
+def section_11():
+    global base, obj, mat
+    from neverblender import nvb_cleanmodels
+    src = write_model('t_tilewok', [AABB.format(name='t_tilewok_wg', model='t_tilewok')], 'tile')
+    find = nvb_cleanmodels.find
+    # Export Walkmesh writes Neverblender's .wok; compiling without it leaves the compiler's
+    for label, walkmesh, compiled in (('walkmesh export', True, False), ('built-in compile', False, True),
+                                      ('both', True, True)):
+        base = import_model(src)
+        name = 't_tilewok_' + label.split()[0]
+        wok = os.path.join(OUT, name + '.wok')
+        if os.path.exists(wok):
+            os.remove(wok)
+        # Neverblender's copy of the cleanmodels compiler, not a program on the PATH
+        nvb_cleanmodels.find = lambda preferred=('',): (None, None)
+        try:
+            export(base, name, walkmesh=walkmesh, compile_binary=compiled)
+        finally:
+            nvb_cleanmodels.find = find
+        pos = wok_positions(wok) if os.path.exists(wok) else None
+        by_cm = pos is not None and mdl_lines(wok)[0] == '# Rewritten by cleanmodels'
+        R.check(pos is not None and len(pos) == 1 and [float(x) for x in pos[0].split()] == [0, 0, 0]
+                and by_cm == (not walkmesh),
+                'tile .wok keeps position 0 0 0 ({})'.format(label),
+                'positions {} written by cleanmodels {}'.format(pos, by_cm))
 
 
 R.finish()

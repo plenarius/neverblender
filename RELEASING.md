@@ -20,7 +20,7 @@ a pull request. Release tags (`v*`) cannot be moved or deleted once pushed.
 2. Run the release check on Blender 3.3, 3.6, 4.0, 4.5 and 5.2 (every model
    round-trips, exports match across versions, the tools work). It must pass.
    With it, on each version: `scripts/tests/run_tests.sh BLENDER` (export
-   tests: smoothing groups, MTR files, shadow) and
+   tests: smoothing groups, MTR files, shadow, tile walkmesh) and
    `scripts/tests/run_roundtrip.sh BLENDER OLD_ADDON_DIR OUT_DIR models...`
    (imported models export the same as with the last release; get its
    add-on with `git archive vX.Y.Z neverblender | tar -x -C OLD`), and once
